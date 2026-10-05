@@ -192,6 +192,8 @@ namespace DeferredRaidGeneration
         private static readonly MethodInfo CloneMethod = AccessTools.Method(typeof(object), "MemberwiseClone");
 
         private readonly List<PendingGeneration> pending = new List<PendingGeneration>();
+
+        public bool HasPending => pending.Count > 0;
         private float nextStepTime;
 
         /// <summary>Set while a finished raid is being replayed through the vanilla incident code.</summary>
@@ -715,6 +717,57 @@ namespace DeferredRaidGeneration
                 return true;
             __result = arena.Generated[index];
             arena.Generated.RemoveAt(index);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// An autosave while groups are still being generated would have to finish them first, which brings back the
+    /// freeze at an unpredictable moment. While something is pending, the autosave counter is held one tick short of
+    /// firing, so the autosave happens on the first tick after generation finishes. A hold longer than
+    /// MaxHoldSeconds of real time lets the autosave through (it then finishes the groups as a manual save does).
+    /// </summary>
+    [HarmonyPatch(typeof(Autosaver), nameof(Autosaver.AutosaverTick))]
+    public static class Patch_Autosaver_AutosaverTick
+    {
+        private const float MaxHoldSeconds = 60f;
+        private static readonly AccessTools.FieldRef<Autosaver, int> ticksSinceSave =
+            AccessTools.FieldRefAccess<Autosaver, int>("ticksSinceSave");
+        private static readonly MethodInfo intervalGetter = AccessTools.PropertyGetter(typeof(Autosaver), "AutosaveIntervalTicks");
+        private static float holdStart = -1f;
+
+        [DebugAction("Deferred Raid Generation", "Autosave in ~5 s (test)", allowedGameStates = AllowedGameStates.Playing)]
+        private static void AutosaveSoon()
+        {
+            Autosaver autosaver = Find.Autosaver;
+            ticksSinceSave(autosaver) = Math.Max(0, (int)intervalGetter.Invoke(autosaver, null) - 300);
+            Messages.Message("Autosave will trigger in 300 ticks.", MessageTypeDefOf.NeutralEvent, false);
+        }
+
+        public static bool Prefix(Autosaver __instance)
+        {
+            if (DeferredRaids.Instance?.HasPending != true)
+            {
+                if (holdStart >= 0f && Prefs.DevMode)
+                    Log.Message($"[DeferredRaidGeneration] Autosave released after waiting {Time.realtimeSinceStartup - holdStart:F1} s for pending groups.");
+                holdStart = -1f;
+                return true;
+            }
+            int interval = (int)intervalGetter.Invoke(__instance, null);
+            if (ticksSinceSave(__instance) + 1 < interval)
+                return true;
+            if (holdStart < 0f)
+            {
+                holdStart = Time.realtimeSinceStartup;
+                if (Prefs.DevMode)
+                    Log.Message("[DeferredRaidGeneration] Autosave held until pending groups finish generating.");
+            }
+            if (Time.realtimeSinceStartup - holdStart > MaxHoldSeconds)
+            {
+                holdStart = -1f;
+                return true;
+            }
+            ticksSinceSave(__instance) = interval - 1;
             return false;
         }
     }

@@ -16,8 +16,8 @@ Removes most of the multi-second freeze when a large raid fires.
 [*]Applies to enemy and friendly raids with at least 5 pawns. Smaller raids, trader caravans, quest raids, and raid types that create their own threats (for example mechanoid sieges) run immediately as in vanilla.
 [*]With [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3220299022]Dynamic Diplomacy - Continued[/url], the armies of a full-simulation conquest arena are generated the same way. The arena map itself is still generated in one go when the battle starts.
 [*]Each generation step still costs one pawn's generation time (usually 15-30 ms, occasionally over 100 ms), so you may notice a light stutter while a large raid is being prepared. A single pawn cannot be split further.
-[*]Saving while pawns are being generated finishes them first, so nothing is lost; that save takes as long as the raid would have in vanilla.
-[*]Development mode adds a debug action "Toggle deferral (A/B test)" to compare with vanilla, and logs each deferred group.
+[*]An autosave that comes due while pawns are being generated waits until they are done (at most a minute), then saves right away. A manual save in that window finishes them first, so nothing is lost; that save takes as long as the raid would have in vanilla.
+[*]Development mode adds debug actions "Toggle deferral (A/B test)" and "Autosave in ~5 s (test)", and logs each deferred group.
 [*]Safe to add to or remove from an existing save.
 [/list]
 
@@ -39,6 +39,7 @@ Removes most of the multi-second freeze when a large raid fires.
 [*]Dynamic Diplomacy arenas of 255-324 pawns: armies generated over 34-73 s while playing; the battle start (arena map generation and spawning) still paused the game for 1.7-7 s.
 [*]Saving while a raid and an arena were still being generated: both were finished before the save; after loading, the arena was intact with all 317 pawns on its map and nothing left behind.
 [*]Loading a save while groups were still being generated: nothing carried over into the loaded game.
+[*]Autosave due while a 98-pawn raid was being generated: it waited 19.1 s until the raid arrived, then saved.
 [*]Trader caravans of 14-19 pawns: 0.27-0.52 s, not deferred; the container-scan cache makes little measurable difference with only one map.
 [/list]
 [hr][/hr]
