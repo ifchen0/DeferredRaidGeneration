@@ -78,7 +78,23 @@ namespace DeferredRaidGeneration
 
         public override int Count => Options.Count;
         public override string Label => Worker.def.defName;
-        public override bool StillValid => Parms.target is Map map && Find.Maps.Contains(map);
+        /// <summary>
+        /// Besides the map still existing, an enemy raid needs its faction to still qualify the way
+        /// IncidentWorker_RaidEnemy.TryResolveRaidFaction checks it; otherwise the replay would silently switch to
+        /// another faction and generate everything again. A faction that made peace meanwhile simply does not come.
+        /// </summary>
+        public override bool StillValid
+        {
+            get
+            {
+                if (!(Parms.target is Map map) || !Find.Maps.Contains(map))
+                    return false;
+                if (Worker is IncidentWorker_RaidEnemy
+                    && !(Parms.faction != null && Parms.faction.HostileTo(Faction.OfPlayer) && (!Parms.faction.deactivated || Parms.forced)))
+                    return false;
+                return true;
+            }
+        }
 
         /// <summary>Same request PawnGroupKindWorker_Normal.GeneratePawns builds.</summary>
         protected override Pawn GeneratePawn(int index)
@@ -173,6 +189,7 @@ namespace DeferredRaidGeneration
 
         private static readonly MethodInfo ResolveRaidPoints = AccessTools.Method(typeof(IncidentWorker_Raid), "ResolveRaidPoints");
         private static readonly MethodInfo TryResolveRaidFaction = AccessTools.Method(typeof(IncidentWorker_Raid), "TryResolveRaidFaction");
+        private static readonly MethodInfo CloneMethod = AccessTools.Method(typeof(object), "MemberwiseClone");
 
         private readonly List<PendingGeneration> pending = new List<PendingGeneration>();
         private float nextStepTime;
@@ -240,7 +257,19 @@ namespace DeferredRaidGeneration
             if (worker.def.requireColonistsPresent && map.mapPawns.FreeColonistsSpawnedCount == 0)
                 return false;
 
-            PendingRaid raid = Plan(worker, parms);
+            // Vanilla re-rolls the child-raid restriction every time it runs, so a raid that is handed back to vanilla
+            // must not keep the one rolled while planning, or the chance of a child raid would be rolled twice.
+            RaidAgeRestrictionDef originalAgeRestriction = parms.raidAgeRestriction;
+            PendingRaid raid = null;
+            try
+            {
+                raid = Plan(worker, parms);
+            }
+            finally
+            {
+                if (raid == null || raid.Options.Count < MinPawnsToDefer)
+                    parms.raidAgeRestriction = originalAgeRestriction;
+            }
             if (raid == null || raid.Options.Count < MinPawnsToDefer)
                 return false;
 
@@ -279,6 +308,15 @@ namespace DeferredRaidGeneration
             if (Declares(strategyType, nameof(RaidStrategyWorker.SpawnThreats), typeof(RaidStrategyWorker))
                 || Declares(strategyType, nameof(RaidStrategyWorker.TryGenerateThreats), typeof(RaidStrategyWorker)))
                 return null;
+
+            // Vanilla fails the incident when no spawn center is found; check that now, since the caller is told the
+            // raid succeeded as soon as it is queued. Done on a copy because some arrival modes cannot resolve twice
+            // (EmergeFromWater returns false once spawnCenter is set); the replay resolves it again for the map as it
+            // is then. CenterDrop may fall back to EdgeDrop, which also changes the points, so that change is kept.
+            var probe = (IncidentParms)CloneMethod.Invoke(parms, null);
+            if (!probe.raidArrivalMode.Worker.TryResolveRaidSpawnCenter(probe))
+                return null;
+            parms.raidArrivalMode = probe.raidArrivalMode;
 
             PawnGroupMakerParms groupParms = IncidentParmsUtility.GetDefaultPawnGroupMakerParms(groupKind, parms);
             groupParms.points = IncidentWorker_Raid.AdjustedRaidPoints(parms.points, parms.raidArrivalMode, parms.raidStrategy,
@@ -333,6 +371,8 @@ namespace DeferredRaidGeneration
             registered.Remove(generation.Generated);
             if (!generation.StillValid)
             {
+                if (Prefs.DevMode)
+                    Log.Message($"[DeferredRaidGeneration] Dropped {generation.Label}: its map or faction no longer qualifies.");
                 ReleaseUnused(generation);
                 return;
             }
