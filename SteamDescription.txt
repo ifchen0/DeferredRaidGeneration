@@ -1,0 +1,43 @@
+[b]Warning:[/b] this mod was written with AI coding tools (Claude Code), and it substantially changes how raid pawns are generated: large raids are no longer created in the frame they fire, and the vanilla raid code is run a second time with pawns generated in advance. It was tested in one late-game colony (results at the end), not across many mod lists. Keep a backup save, and if raids or Dynamic Diplomacy battles behave oddly, remove the mod first before reporting the issue to other mod authors.
+
+Removes most of the multi-second freeze when a large raid fires.
+
+[h2]Seconds of freeze before the raid letter[/h2]Normally every raider is generated in the same frame the raid fires, so a raid of 100+ pawns freezes the game for several seconds before the letter shows up. In a late-game colony each pawn costs 15-35 ms to generate, and the game also repeats a scan of every container on every map ([i]MapPawns.AllPawnsUnspawned[/i]) dozens of times per pawn.
+
+[b]Fix:[/b] When a raid of 5 or more pawns fires, its faction, strategy, arrival mode and pawn kinds are decided by the vanilla code as usual. The pawns are then generated one at a time, a quarter of a second apart, while the game keeps running. Once all of them exist, the vanilla raid code runs again and receives these pawns instead of generating new ones, so arrival, letter, lords and loot are unchanged. The raid shows up later than it otherwise would: about 0.25 s of real time per pawn, at most about 20 s.
+
+[h2]Also[/h2][list]
+[*]For all pawn generation, including trader caravans, raids under 5 pawns and quest raids (which are not deferred), the container scan is done once per map for each pawn or pawn group instead of dozens of times.
+[*]When a deferred raid arrives, raiders start looking for their first job spread over half a second instead of all in the same tick.
+[*]The "remove died thoughts" check on spawn ([i]PawnDiedOrDownedThoughtsUtility.RemoveDiedThoughts[/i]) only looks at pawns that remember one of the raiders, instead of every pawn in the world.
+[/list]
+
+[h2]Notes[/h2][list]
+[*]Applies to enemy and friendly raids with at least 5 pawns. Smaller raids, trader caravans, quest raids, and raid types that create their own threats (for example mechanoid sieges) run immediately as in vanilla.
+[*]With [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3220299022]Dynamic Diplomacy - Continued[/url], the armies of a full-simulation conquest arena are generated the same way. The arena map itself is still generated in one go when the battle starts.
+[*]Each generation step still costs one pawn's generation time (usually 15-30 ms, occasionally over 100 ms), so you may notice a light stutter while a large raid is being prepared. A single pawn cannot be split further.
+[*]Saving while pawns are being generated finishes them first, so nothing is lost; that save takes as long as the raid would have in vanilla.
+[*]Development mode adds a debug action "Toggle deferral (A/B test)" to compare with vanilla, and logs each deferred group.
+[*]Safe to add to or remove from an existing save.
+[/list]
+
+[h2]Test report (2026-10-05)[/h2]One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 170 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs; some early runs had a profiling mod attached, which adds a little overhead.
+
+[b]Vanilla (deferral off)[/b]
+[list]
+[*]Friendly raid, 93 pawns: 2.6 s freeze.
+[*]Friendly raid, 70 pawns: 2.9 s freeze.
+[*]Dynamic Diplomacy conquest arena, 234-258 pawns: 12.3-12.4 s freeze; 31.6 s once several old arena maps were still loaded (the container scan alone took 19 s).
+[/list]
+[b]With this mod[/b]
+[list]
+[*]Enemy raids of 10 / 15 / 53 / 63 / 144 pawns: generated over 2.6 / 4.0 / 21.4 / 18.5 / 25.5 s, then arrived with a pause of 58 / 19 / 137 / 54 / 91 ms. (The 144-pawn delay was measured before a pacing fix that brings large raids back to about 20 s.)
+[*]Friendly raids of 23 / 51 / 62 / 96 pawns: arrival pause 38 / 57 / 50 / 17 ms.
+[*]Generation steps: 15-20 ms on average, worst single step 27-320 ms in raids (the 320 ms step was a garbage collection) and once 1.5 s in a Dynamic Diplomacy arena.
+[*]Dynamic Diplomacy arenas of 255-324 pawns: armies generated over 34-73 s while playing; the battle start (arena map generation and spawning) still paused the game for 1.7-7 s.
+[*]Saving while a raid and an arena were still being generated: both were finished before the save; after loading, the arena was intact with all 317 pawns on its map and nothing left behind.
+[*]Loading a save while groups were still being generated: nothing carried over into the loaded game.
+[*]Trader caravans of 14-19 pawns: 0.27-0.52 s, not deferred; the container-scan cache makes little measurable difference with only one map.
+[/list]
+[hr][/hr]
+This mod was developed with the help of AI coding tools (Claude Code). Full source code is included in the Source folder and on [url=https://github.com/ifchen0/DeferredRaidGeneration]GitHub[/url] for review.
