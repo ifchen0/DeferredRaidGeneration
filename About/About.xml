@@ -30,7 +30,7 @@ Notes
 - Safe to add to or remove from an existing save.
 
 Test report (2026-10-05)
-One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 170 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs; some early runs had a profiling mod attached, which adds a little overhead.
+One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 170 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs; some early runs had a profiling mod attached, which adds a little overhead. The runs span several builds made during the day, so delays differ: the current build waits 0.25 s per pawn, up to about 20 s.
 
 Vanilla (deferral off)
 
@@ -40,9 +40,11 @@ Vanilla (deferral off)
 
 With this mod
 
-- Enemy raids of 10 / 15 / 53 / 63 / 144 pawns: generated over 2.6 / 4.0 / 21.4 / 18.5 / 25.5 s, then arrived with a pause of 58 / 19 / 137 / 54 / 91 ms. (The 144-pawn delay was measured before a pacing fix that brings large raids back to about 20 s.)
+- Enemy raids of 10 / 11 / 15 / 53 / 63 / 111 / 144 pawns: arrived with a pause of 58 / 120 / 19 / 137 / 54 / 140 / 91 ms.
+- Current build: 11 pawns generated over 3.1 s, 111 pawns over 21.5 s (a little over 20 s because each step starts on a new frame).
+- Enemy raid of 21 pawns by drop pods to the colony center: generated over 5.4 s, arrival pause 45 ms.
 - Friendly raids of 23 / 51 / 62 / 96 pawns: arrival pause 38 / 57 / 50 / 17 ms.
-- Generation steps: 15-20 ms on average, worst single step 27-320 ms in raids (the 320 ms step was a garbage collection) and once 1.5 s in a Dynamic Diplomacy arena.
+- Generation steps: 13-20 ms on average (40 ms for the first raid after starting the game), worst single step 27-320 ms in raids (the 320 ms step was a garbage collection) and once 1.5 s in a Dynamic Diplomacy arena.
 - Dynamic Diplomacy arenas of 255-324 pawns: armies generated over 34-73 s while playing; the battle start (arena map generation and spawning) still paused the game for 1.7-7 s.
 - Saving while a raid and an arena were still being generated: both were finished before the save; after loading, the arena was intact with all 317 pawns on its map and nothing left behind.
 - Loading a save while groups were still being generated: nothing carried over into the loaded game.
