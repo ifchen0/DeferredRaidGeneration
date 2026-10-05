@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>Deferred Raid Generation</name>
+  <author>ifchen0</author>
+  <packageId>ifchen0.deferredraidgeneration</packageId>
+  <supportedVersions><li>1.6</li></supportedVersions>
+  <description>Removes most of the multi-second freeze when a large raid fires.
+
+Normally every raider is generated in the same frame the raid fires, so a raid of 100+ pawns freezes the game for seconds before the letter shows up. In a late-game colony each pawn costs 20-35 ms to generate, and the game also repeats a scan of every container on every map dozens of times per pawn.
+
+With this mod, when a large raid fires, its composition is decided as usual, but the pawns are generated one at a time over about 20 seconds while the game keeps running. Once all of them exist, the normal vanilla raid code runs and they arrive with the usual letter. The raid shows up about 20 seconds (real time) later than it otherwise would.
+
+Also, when the raid arrives:
+- The container scan is done once per map while each pawn is generated, instead of dozens of times.
+- Raiders start looking for their first job spread over half a second instead of all in the same tick.
+- The "remove died thoughts" check on spawn only looks at pawns that remember a raider, instead of every pawn in the world.
+In my colony a 93-pawn friendly raid froze the game for 2.6 s in vanilla; with this mod raids of 50-75 pawns arrived with a pause of 0.03-0.14 s.
+
+Notes:
+- Applies to enemy and friendly raids with at least 15 pawns. Small raids, quest raids, and raid types that create their own threats (for example mechanoid sieges) run immediately as in vanilla.
+- With Dynamic Diplomacy, the armies of a full-simulation conquest arena are generated the same way. The arena map itself is still generated in one go when the battle starts.
+- Saving while pawns are being generated finishes them first, so nothing is lost; that save takes as long as the raid would have in vanilla.
+- Development mode adds a debug action "Toggle deferral (A/B test)" to compare with vanilla.
+- Safe to add to or remove from an existing save.</description>
+  <modDependencies>
+    <li><packageId>brrainz.harmony</packageId><displayName>Harmony</displayName><steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl></li>
+  </modDependencies>
+  <loadAfter><li>brrainz.harmony</li></loadAfter>
+</ModMetaData>
