@@ -55,16 +55,7 @@ namespace DeferredRaidGeneration
             int index = Next++;
             try
             {
-                Pawn pawn;
-                UnspawnedCache.Active = true;
-                try
-                {
-                    pawn = GeneratePawn(index);
-                }
-                finally
-                {
-                    UnspawnedCache.Clear();
-                }
+                Pawn pawn = GeneratePawn(index);
                 if (pawn != null)
                     Generated.Add(pawn);
             }
@@ -166,17 +157,18 @@ namespace DeferredRaidGeneration
     /// <summary>
     /// Large groups of pawns (enemy and friendly raids, Dynamic Diplomacy arenas) are split in two: when the event
     /// fires, what to generate is decided exactly as the original code would, then the pawns are generated one at a
-    /// time over about TargetSeconds while the game keeps running. When all pawns exist the original code runs again
+    /// time (SecondsPerPawn each, at most MaxSeconds in total) while the game keeps running. When all pawns exist the original code runs again
     /// ("replay") and the pre-generated pawns are handed to it instead of generating new ones, so arrival, letter,
     /// lords and loot are all unchanged.
     /// </summary>
     public class DeferredRaids : GameComponent
     {
-        public const int MinPawnsToDefer = 15;
-        // Pawns are generated one at a time, evenly spread so the whole group takes about TargetSeconds of real time.
-        // After a step that took t ms the next one also waits at least IdleFactor * t ms, so a slow step is never
-        // followed directly by another one.
-        private const float TargetSeconds = 20f;
+        public const int MinPawnsToDefer = 5;
+        // Pawns are generated one at a time, SecondsPerPawn of real time apart, so a group is delayed in proportion to
+        // its size, but by at most MaxSeconds. After a step that took t ms the next one also waits at least
+        // IdleFactor * t ms, so a slow step is never followed directly by another one.
+        private const float SecondsPerPawn = 0.25f;
+        private const float MaxSeconds = 20f;
         private const float IdleFactor = 2f;
 
         private static readonly MethodInfo ResolveRaidPoints = AccessTools.Method(typeof(IncidentWorker_Raid), "ResolveRaidPoints");
@@ -319,10 +311,13 @@ namespace DeferredRaidGeneration
             if (pending.Count == 0 || Time.realtimeSinceStartup < nextStepTime || LongEventHandler.AnyEventNowOrWaiting)
                 return;
             PendingGeneration generation = pending[0];
+            float stepStart = Time.realtimeSinceStartup;
             var watch = Stopwatch.StartNew();
             generation.GenerateNext();
-            float interval = TargetSeconds / Math.Max(1, generation.Count);
-            nextStepTime = Time.realtimeSinceStartup + Math.Max(interval, (float)watch.Elapsed.TotalSeconds * IdleFactor);
+            // Measured from the start of the step, so the step's own time is part of the interval and the total
+            // stays close to MaxSeconds; a slow step still gets IdleFactor times its own duration of rest.
+            float interval = Math.Min(SecondsPerPawn, MaxSeconds / Math.Max(1, generation.Count));
+            nextStepTime = stepStart + Math.Max(interval, (float)watch.Elapsed.TotalSeconds * (1f + IdleFactor));
             double ms = watch.Elapsed.TotalMilliseconds;
             generation.Steps++;
             generation.StepMsTotal += ms;
@@ -486,23 +481,77 @@ namespace DeferredRaidGeneration
     /// <summary>
     /// Pawn generation lists every pawn in the world many times per pawn (unique names, relation candidates); for each
     /// map that includes walking every thing holder to find pawns inside containers. Nothing enters or leaves map
-    /// containers while one pawn is being generated, so during a deferred generation step that walk is done once per
-    /// map and replayed into the vanilla result buffer.
+    /// containers while pawns are being generated, so inside any generation scope (one pawn, or a whole pawn group
+    /// such as a caravan) that walk is done once per map and replayed into the vanilla result buffer. Applies to all
+    /// pawn generation, deferred or not.
     /// </summary>
     public static class UnspawnedCache
     {
-        public static bool Active;
+        private static int depth;
         private static readonly Dictionary<MapPawns, List<Pawn>> cache = new Dictionary<MapPawns, List<Pawn>>();
+
+        public static bool Active => depth > 0;
+
+        public static void Enter() => depth++;
+
+        public static void Exit()
+        {
+            if (depth > 0)
+                depth--;
+            if (depth == 0)
+                cache.Clear();
+        }
 
         public static void Clear()
         {
-            Active = false;
+            depth = 0;
             cache.Clear();
         }
 
         public static bool TryGet(MapPawns mapPawns, out List<Pawn> pawns) => cache.TryGetValue(mapPawns, out pawns);
 
         public static void Store(MapPawns mapPawns, List<Pawn> pawns) => cache[mapPawns] = new List<Pawn>(pawns);
+    }
+
+    [HarmonyPatch(typeof(PawnGenerator), nameof(PawnGenerator.GeneratePawn), typeof(PawnGenerationRequest))]
+    public static class Patch_PawnGenerator_GeneratePawn_Scope
+    {
+        public static void Prefix() => UnspawnedCache.Enter();
+
+        public static Exception Finalizer(Exception __exception)
+        {
+            UnspawnedCache.Exit();
+            return __exception;
+        }
+    }
+
+    /// <summary>
+    /// Keeps the cache across all pawns of one group (raid, caravan, quest group), not just within one pawn. In
+    /// development mode, slow groups that were generated immediately (not deferred) are logged.
+    /// </summary>
+    [HarmonyPatch(typeof(PawnGroupKindWorker), nameof(PawnGroupKindWorker.GeneratePawns),
+        typeof(PawnGroupMakerParms), typeof(PawnGroupMaker), typeof(bool))]
+    public static class Patch_PawnGroupKindWorker_GeneratePawns_Scope
+    {
+        private const double LogThresholdMs = 100;
+
+        public static void Prefix(out long __state)
+        {
+            __state = Stopwatch.GetTimestamp();
+            UnspawnedCache.Enter();
+        }
+
+        public static Exception Finalizer(Exception __exception, PawnGroupMakerParms parms, List<Pawn> __result, long __state)
+        {
+            UnspawnedCache.Exit();
+            if (Prefs.DevMode && !DeferredRaids.AnyReplaying)
+            {
+                double ms = (Stopwatch.GetTimestamp() - __state) * 1000.0 / Stopwatch.Frequency;
+                if (ms >= LogThresholdMs)
+                    Log.Message($"[DeferredRaidGeneration] Generated {__result?.Count ?? 0} pawns ({parms?.groupKind?.defName}, not deferred) in {ms:F0} ms.");
+            }
+            return __exception;
+        }
     }
 
     [HarmonyPatch(typeof(MapPawns), nameof(MapPawns.AllPawnsUnspawned), MethodType.Getter)]
