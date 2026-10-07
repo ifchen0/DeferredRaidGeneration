@@ -23,6 +23,36 @@ namespace DeferredRaidGeneration
             harmony.PatchAll();
             DynamicDiplomacyPatch.TryPatch(harmony);
             ApparelPairsCache.TryPatch(harmony);
+            BreakingNewsCompat.Init();
+        }
+    }
+
+    /// <summary>
+    /// Breaking News' "mechanoid advance" turns the next enemy raid into a mechanoid raid, but only while the raid has
+    /// no faction yet (IncidentWorker_Raid.TryExecuteWorker prefix). Planning a deferred raid resolves the faction
+    /// first, so the boost would be used up without effect; such raids are left to vanilla while the boost is active.
+    /// </summary>
+    public static class BreakingNewsCompat
+    {
+        private static PropertyInfo instance;
+        private static PropertyInfo mechRaidBoostActive;
+
+        public static void Init()
+        {
+            Type component = AccessTools.TypeByName("BreakingNews.GameComponent_BreakingNews");
+            if (component == null)
+                return;
+            instance = AccessTools.Property(component, "Instance");
+            mechRaidBoostActive = AccessTools.Property(component, "MechRaidBoostActive");
+        }
+
+        /// <summary>True when Breaking News would still change the faction of this enemy raid.</summary>
+        public static bool WantsRaidFaction(IncidentWorker worker, IncidentParms parms)
+        {
+            if (instance == null || mechRaidBoostActive == null || parms.faction != null || worker.def?.defName != "RaidEnemy")
+                return false;
+            object component = instance.GetValue(null);
+            return component != null && (bool)mechRaidBoostActive.GetValue(component);
         }
     }
 
@@ -275,6 +305,12 @@ namespace DeferredRaidGeneration
                 return false;
             if (worker.def.requireColonistsPresent && map.mapPawns.FreeColonistsSpawnedCount == 0)
                 return false;
+            if (BreakingNewsCompat.WantsRaidFaction(worker, parms))
+            {
+                if (Prefs.DevMode)
+                    Log.Message("[DeferredRaidGeneration] Breaking News mechanoid advance is active; running this raid immediately.");
+                return false;
+            }
 
             // Vanilla re-rolls the child-raid restriction every time it runs, so a raid that is handed back to vanilla
             // must not keep the one rolled while planning, or the chance of a child raid would be rolled twice.
