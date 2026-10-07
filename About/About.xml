@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ModMetaData>
-  <name>Deferred Raid Generation</name>
+  <name>Deferred Raid Generation: No Big-Raid Freeze</name>
   <author>ifchen0</author>
   <packageId>ifchen0.deferredraidgeneration</packageId>
   <url>https://github.com/ifchen0/DeferredRaidGeneration</url>
