@@ -7,7 +7,9 @@ Removes most of the multi-second freeze when a large raid fires.
 [b]Fix:[/b] When a raid of 5 or more pawns fires, its faction, strategy, arrival mode and pawn kinds are decided by the vanilla code as usual. The pawns are then generated one at a time, a quarter of a second apart, while the game keeps running. Once all of them exist, the vanilla raid code runs again and receives these pawns instead of generating new ones, so arrival, letter, lords and loot are unchanged. The raid shows up later than it otherwise would: about 0.25 s of real time per pawn, at most about 20 s.
 
 [h2]Also[/h2][list]
-[*]For all pawn generation, including trader caravans, raids under 5 pawns and quest raids (which are not deferred), the container scan is done once per map for each pawn or pawn group instead of dozens of times.
+[*]For all pawn generation, including trader caravans, raids under 5 pawns and quest raids (which are not deferred), the container scan is done once per map for each pawn or pawn group instead of dozens of times. Steps of a deferred group share it for up to a second.
+[*]With Humanoid Alien Races, starting apparel no longer copies and filters the full apparel list for every pawn: the race-filtered list is built once per race (same HAR rule, same result).
+[*]Pawn graphics are built the first time a pawn is drawn, 2-5 ms each with HAR, so moving the camera onto a fresh 140-pawn raid froze for about 0.7 s. Deferred raids now build them during generation; other pawns on the map not drawn yet are prepared in the background at about 1 ms per frame.
 [*]When a deferred raid arrives, raiders start looking for their first job spread over half a second instead of all in the same tick.
 [*]The "remove died thoughts" check on spawn ([i]PawnDiedOrDownedThoughtsUtility.RemoveDiedThoughts[/i]) only looks at pawns that remember one of the raiders, instead of every pawn in the world.
 [*]Raiders check every 2 seconds whether there is enough worth stealing around them, and once they start stealing they look for a target for each raider every 3 seconds. Each check computes the market value of every item near every raider, so raiders standing together compute the same items (corpses included, which are worth the whole pawn) again and again. Within one check each item's value is now computed once; what raiders steal is unchanged. Same idea as [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3781897112]Raider Approach Lag Fix[/url] by OldManYoung, extended to the stealing phase. The two work together, but this mod already covers what it does.
@@ -16,9 +18,9 @@ Removes most of the multi-second freeze when a large raid fires.
 [h2]Notes[/h2][list]
 [*]Applies to enemy and friendly raids with at least 5 pawns. Smaller raids, trader caravans, quest raids, and raid types that create their own threats (for example mechanoid sieges) run immediately as in vanilla.
 [*]With [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3220299022]Dynamic Diplomacy - Continued[/url], the armies of a full-simulation conquest arena are generated the same way. The arena map itself is still generated in one go when the battle starts.
-[*]Each generation step still costs one pawn's generation time (usually 15-30 ms, occasionally over 100 ms), so you may notice a light stutter while a large raid is being prepared. A single pawn cannot be split further.
+[*]Each generation step still costs one pawn's generation time (usually 15-30 ms, occasionally over 100 ms), so you may notice a light stutter while a large raid is being prepared. A single pawn cannot be split further. While you move or zoom the camera, steps wait until it has been still for 0.4 s (at most 10 s per group).
 [*]An autosave that comes due while pawns are being generated waits until they are done (at most a minute), then saves right away. A manual save in that window finishes them first, so nothing is lost; that save takes as long as the raid would have in vanilla.
-[*]Development mode adds debug actions "Toggle deferral (A/B test)", "Autosave in ~5 s (test)", "Toggle steal value cache (A/B test)" and "Raiders start stealing (test)", and logs each deferred group and a summary of steal checks.
+[*]Development mode adds debug actions "Toggle deferral (A/B test)", "Autosave in ~5 s (test)", "Toggle steal value cache (A/B test)", "Raiders start stealing (test)", "Toggle render warmup (A/B test)", "Reset pawn graphics on map (test)", "Toggle apparel pair cache (A/B test)" and "Toggle camera wait (A/B test)", and logs each deferred group, steal checks and slow pawn drawing frames.
 [*]Safe to add to or remove from an existing save.
 [/list]
 
@@ -43,6 +45,8 @@ Removes most of the multi-second freeze when a large raid fires.
 [*]Autosave due while a 98-pawn raid was being generated: it waited 19.1 s until the raid arrived, then saved.
 [*]Trader caravans of 14-19 pawns: 0.27-0.52 s, not deferred; the container-scan cache makes little measurable difference with only one map.
 [*]Steal checks (2026-10-07, 82-pawn raid, Raider Approach Lag Fix not loaded): 2.5-2.8 ms per check with the cache off, 1.4-1.5 ms with it on. Once stealing, item value computations dropped by about half.
+[*]Pawn graphics (2026-10-07): a 140-pawn raid arriving on screen took a 737 ms frame without the warmup; 138-165-pawn raids with it arrived fully built, arrival frame 29-35 ms.
+[*]Generation steps (2026-10-07, 138-165-pawn raids): 25-27 ms on average with the apparel cache and shared container scan, down from about 33-36 ms.
 [/list]
 [hr][/hr]
 This mod was developed with the help of AI coding tools (Claude Code). Full source code is included in the Source folder and on [url=https://github.com/ifchen0/DeferredRaidGeneration]GitHub[/url] for review.
