@@ -22,6 +22,7 @@ namespace DeferredRaidGeneration
             var harmony = new Harmony("ifchen0.deferredraidgeneration");
             harmony.PatchAll();
             DynamicDiplomacyPatch.TryPatch(harmony);
+            ApparelPairsCache.TryPatch(harmony);
         }
     }
 
@@ -36,6 +37,7 @@ namespace DeferredRaidGeneration
         public int Steps;
         public double StepMsTotal;
         public double StepMsMax;
+        public float CameraWaitSeconds;
         public float StartTime = Time.realtimeSinceStartup;
         public bool Failed;
 
@@ -187,6 +189,13 @@ namespace DeferredRaidGeneration
         private const float SecondsPerPawn = 0.25f;
         private const float MaxSeconds = 20f;
         private const float IdleFactor = 2f;
+        // While the player moves or zooms the camera, steps wait until it has been still for CameraStillSeconds, so
+        // the hitch does not land in the middle of a pan; a group is held back by at most MaxCameraWaitSeconds.
+        private const float CameraStillSeconds = 0.4f;
+        private const float MaxCameraWaitSeconds = 10f;
+
+        private static readonly AccessTools.FieldRef<CameraDriver, Vector3> CameraRootPos = AccessTools.FieldRefAccess<CameraDriver, Vector3>("rootPos");
+        public static bool CameraWaitDisabled;
 
         private static readonly MethodInfo ResolveRaidPoints = AccessTools.Method(typeof(IncidentWorker_Raid), "ResolveRaidPoints");
         private static readonly MethodInfo TryResolveRaidFaction = AccessTools.Method(typeof(IncidentWorker_Raid), "TryResolveRaidFaction");
@@ -196,6 +205,12 @@ namespace DeferredRaidGeneration
 
         public bool HasPending => pending.Count > 0;
         private float nextStepTime;
+        // Pawn generated in the last step whose graphics are built in the next frame, so the two costs never share a frame.
+        private Pawn warmNext;
+        private Vector3 lastCameraPos;
+        private float lastCameraSize;
+        private float lastCameraMoveTime;
+        private float lastUpdateTime;
 
         /// <summary>Set while a finished raid is being replayed through the vanilla incident code.</summary>
         public static PendingRaid ReplayingRaid;
@@ -280,6 +295,7 @@ namespace DeferredRaidGeneration
             Enqueue(raid);
             if (Prefs.DevMode)
                 Log.Message($"[DeferredRaidGeneration] Deferred {worker.def.defName}: {raid.Count} pawns of {parms.faction}, {parms.raidStrategy?.defName}/{parms.raidArrivalMode?.defName}.");
+            Patch_MapPawns_AllPawnsUnspawned.ResetStats();
             return true;
         }
 
@@ -348,18 +364,64 @@ namespace DeferredRaidGeneration
             return false;
         }
 
+        [DebugAction("Deferred Raid Generation", "Toggle camera wait (A/B test)", allowedGameStates = AllowedGameStates.Playing)]
+        private static void ToggleCameraWait()
+        {
+            CameraWaitDisabled = !CameraWaitDisabled;
+            Messages.Message(CameraWaitDisabled ? "Camera wait: OFF." : "Camera wait: ON.", MessageTypeDefOf.NeutralEvent, false);
+        }
+
+        /// <summary>True while the camera is moving or zooming, or has only just stopped.</summary>
+        private bool CameraBusy(float now)
+        {
+            CameraDriver camera = Find.CameraDriver;
+            if (camera == null || CameraWaitDisabled)
+                return false;
+            Vector3 pos = CameraRootPos(camera);
+            float size = camera.RootSize;
+            if ((pos - lastCameraPos).sqrMagnitude > 0.0001f || Math.Abs(size - lastCameraSize) > 0.001f)
+                lastCameraMoveTime = now;
+            lastCameraPos = pos;
+            lastCameraSize = size;
+            return now - lastCameraMoveTime < CameraStillSeconds;
+        }
+
         public override void GameComponentUpdate()
         {
+            float now = Time.realtimeSinceStartup;
+            float frameSeconds = Math.Min(now - lastUpdateTime, 0.5f);
+            lastUpdateTime = now;
+            bool cameraBusy = CameraBusy(now);
+            if (pending.Count > 0 && cameraBusy && now >= nextStepTime && pending[0].CameraWaitSeconds < MaxCameraWaitSeconds)
+            {
+                pending[0].CameraWaitSeconds += frameSeconds;
+                return;
+            }
+            if (warmNext != null && !LongEventHandler.AnyEventNowOrWaiting)
+            {
+                if (!warmNext.Destroyed)
+                    PawnRenderWarmup.Warm(warmNext);
+                warmNext = null;
+                return;
+            }
             if (pending.Count == 0 || Time.realtimeSinceStartup < nextStepTime || LongEventHandler.AnyEventNowOrWaiting)
                 return;
             PendingGeneration generation = pending[0];
             float stepStart = Time.realtimeSinceStartup;
             var watch = Stopwatch.StartNew();
             int before = generation.Generated.Count;
-            generation.GenerateNext();
-            // Build its graphics now too, or every pawn of the group builds them in the frame it is first seen.
+            UnspawnedCache.BeginStep();
+            try
+            {
+                generation.GenerateNext();
+            }
+            finally
+            {
+                UnspawnedCache.EndStep();
+            }
+            // Build its graphics ahead of arrival too, or every pawn of the group builds them in the frame it is first seen.
             if (generation.Generated.Count > before)
-                PawnRenderWarmup.Warm(generation.Generated[generation.Generated.Count - 1]);
+                warmNext = generation.Generated[generation.Generated.Count - 1];
             // Measured from the start of the step, so the step's own time is part of the interval and the total
             // stays close to MaxSeconds; a slow step still gets IdleFactor times its own duration of rest.
             float interval = Math.Min(SecondsPerPawn, MaxSeconds / Math.Max(1, generation.Count));
@@ -369,7 +431,12 @@ namespace DeferredRaidGeneration
             generation.StepMsTotal += ms;
             generation.StepMsMax = Math.Max(generation.StepMsMax, ms);
             if (generation.Done)
+            {
+                if (warmNext != null)
+                    PawnRenderWarmup.Warm(warmNext);
+                warmNext = null;
                 Finish(generation);
+            }
         }
 
         private void Finish(PendingGeneration generation)
@@ -387,7 +454,7 @@ namespace DeferredRaidGeneration
             if (generation.Failed)
                 ReleaseUnused(generation);
             if (Prefs.DevMode && generation.Steps > 0)
-                Log.Message($"[DeferredRaidGeneration] Generated {generation.Generated.Count} pawns for {generation.Label} in {generation.Steps} steps over {Time.realtimeSinceStartup - generation.StartTime:F1} s; step avg {generation.StepMsTotal / generation.Steps:F1} ms, max {generation.StepMsMax:F1} ms.");
+                Log.Message($"[DeferredRaidGeneration] Generated {generation.Generated.Count} pawns for {generation.Label} in {generation.Steps} steps over {Time.realtimeSinceStartup - generation.StartTime:F1} s; step avg {generation.StepMsTotal / generation.Steps:F1} ms, max {generation.StepMsMax:F1} ms; waited {generation.CameraWaitSeconds:F1} s for the camera; {Patch_MapPawns_AllPawnsUnspawned.Report()}.");
             ReplayPawns = new HashSet<Pawn>(generation.Generated);
             DiedThoughtHolders = null;
             Staggered.Clear();
@@ -538,30 +605,55 @@ namespace DeferredRaidGeneration
     /// </summary>
     public static class UnspawnedCache
     {
+        // Deferred generation steps share the walk for up to this long, so it is not repeated for every pawn.
+        private const float StepReuseSeconds = 1f;
+
         private static int depth;
         private static readonly Dictionary<MapPawns, List<Pawn>> cache = new Dictionary<MapPawns, List<Pawn>>();
+        private static bool inStep;
+        private static float filledAt;
 
         public static bool Active => depth > 0;
 
-        public static void Enter() => depth++;
+        public static void Enter()
+        {
+            if (depth++ == 0 && !inStep)
+                cache.Clear();
+        }
 
         public static void Exit()
         {
             if (depth > 0)
                 depth--;
-            if (depth == 0)
+            if (depth == 0 && !inStep)
                 cache.Clear();
         }
+
+        /// <summary>Starts a deferred generation step, which may reuse the walk of a step under a second ago.</summary>
+        public static void BeginStep()
+        {
+            if (Time.realtimeSinceStartup - filledAt > StepReuseSeconds)
+                cache.Clear();
+            inStep = true;
+        }
+
+        public static void EndStep() => inStep = false;
 
         public static void Clear()
         {
             depth = 0;
+            inStep = false;
             cache.Clear();
         }
 
         public static bool TryGet(MapPawns mapPawns, out List<Pawn> pawns) => cache.TryGetValue(mapPawns, out pawns);
 
-        public static void Store(MapPawns mapPawns, List<Pawn> pawns) => cache[mapPawns] = new List<Pawn>(pawns);
+        public static void Store(MapPawns mapPawns, List<Pawn> pawns)
+        {
+            if (cache.Count == 0)
+                filledAt = Time.realtimeSinceStartup;
+            cache[mapPawns] = new List<Pawn>(pawns);
+        }
     }
 
     [HarmonyPatch(typeof(PawnGenerator), nameof(PawnGenerator.GeneratePawn), typeof(PawnGenerationRequest))]
@@ -611,21 +703,61 @@ namespace DeferredRaidGeneration
         private static readonly AccessTools.FieldRef<MapPawns, List<Pawn>> resultBuffer =
             AccessTools.FieldRefAccess<MapPawns, List<Pawn>>("allPawnsUnspawnedResult");
 
-        public static bool Prefix(MapPawns __instance, ref List<Pawn> __result)
+        // Development-mode statistics, reported with each deferred group.
+        public static int Hits, Misses, Items, OutsideMisses;
+        public static double HitMs, MissMs, OutsideMs;
+
+        public static bool Prefix(MapPawns __instance, ref List<Pawn> __result, out long __state)
         {
+            __state = Prefs.DevMode ? Stopwatch.GetTimestamp() : 0;
             if (!UnspawnedCache.Active || !UnspawnedCache.TryGet(__instance, out List<Pawn> cached))
                 return true;
             List<Pawn> buffer = resultBuffer(__instance);
             buffer.Clear();
             buffer.AddRange(cached);
             __result = buffer;
+            if (__state != 0)
+            {
+                Hits++;
+                Items += cached.Count;
+                HitMs += (Stopwatch.GetTimestamp() - __state) * 1000.0 / Stopwatch.Frequency;
+            }
             return false;
         }
 
-        public static void Postfix(MapPawns __instance, List<Pawn> __result, bool __runOriginal)
+        public static void Postfix(MapPawns __instance, List<Pawn> __result, bool __runOriginal, long __state)
         {
-            if (__runOriginal && UnspawnedCache.Active && __result != null)
+            if (!__runOriginal)
+                return;
+            if (UnspawnedCache.Active && __result != null)
                 UnspawnedCache.Store(__instance, __result);
+            if (__state == 0)
+                return;
+            double ms = (Stopwatch.GetTimestamp() - __state) * 1000.0 / Stopwatch.Frequency;
+            if (!UnspawnedCache.Active)
+            {
+                OutsideMisses++;
+                OutsideMs += ms;
+                return;
+            }
+            Misses++;
+            Items += __result?.Count ?? 0;
+            MissMs += ms;
+        }
+
+        public static string Report()
+        {
+            int calls = Hits + Misses;
+            string text = $"container walk during generation: {Misses} misses ({MissMs:F0} ms), {Hits} hits ({HitMs:F0} ms), {(calls == 0 ? 0 : Items / calls)} pawns per list; "
+                + $"outside generation: {OutsideMisses} walks ({OutsideMs:F0} ms)";
+            ResetStats();
+            return text;
+        }
+
+        public static void ResetStats()
+        {
+            Hits = Misses = Items = OutsideMisses = 0;
+            HitMs = MissMs = OutsideMs = 0;
         }
     }
 
