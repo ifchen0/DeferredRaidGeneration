@@ -5,7 +5,7 @@
   <packageId>ifchen0.deferredraidgeneration</packageId>
   <url>https://github.com/ifchen0/DeferredRaidGeneration</url>
   <supportedVersions><li>1.6</li></supportedVersions>
-  <description>Warning: this mod was written with AI coding tools (Claude Code), and it substantially changes how raid pawns are generated: large raids are no longer created in the frame they fire, and the vanilla raid code is run a second time with pawns generated in advance. It was tested in one late-game colony (results at the end), not across many mod lists. Keep a backup save, and if raids or Dynamic Diplomacy battles behave oddly, remove the mod first before reporting the issue to other mod authors.
+  <description>Warning: this mod was written with AI coding tools (Claude Code). It changes when and how raid pawns are created: large raids are generated over several seconds, then the vanilla raid code runs a second time with those pawns. Nothing is stored in your save, but mods that patch raid or pawn generation may not expect this, and it was tested in one late-game colony only. If raids or Dynamic Diplomacy battles behave oddly, disable this mod before reporting the issue to other mod authors.
 
 Removes most of the multi-second freeze when a large raid fires.
 
@@ -32,8 +32,11 @@ Notes
 - Development mode adds debug actions "Toggle deferral (A/B test)", "Autosave in ~5 s (test)", "Toggle steal value cache (A/B test)", "Raiders start stealing (test)", "Toggle render warmup (A/B test)", "Reset pawn graphics on map (test)", "Toggle apparel pair cache (A/B test)" and "Toggle camera wait (A/B test)", and logs each deferred group, a summary of steal checks and frames where drawing pawns took 25 ms or more.
 - Safe to add to or remove from an existing save.
 
-Test report (2026-10-05)
-One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 170 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs; some early runs had a profiling mod attached, which adds a little overhead. The runs span several builds made during the day, so delays differ: the current build waits 0.25 s per pawn, up to about 20 s.
+Test report
+One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 170 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs.
+
+2026-10-05: raid generation
+Some runs had a profiling mod attached (a little overhead) and they span several builds, so delays differ: the current build waits 0.25 s per pawn, up to about 20 s.
 
 Vanilla (deferral off)
 
@@ -53,9 +56,11 @@ With this mod
 - Loading a save while groups were still being generated: nothing carried over into the loaded game.
 - Autosave due while a 98-pawn raid was being generated: it waited 19.1 s until the raid arrived, then saved.
 - Trader caravans of 14-19 pawns: 0.27-0.52 s, not deferred; the container-scan cache makes little measurable difference with only one map.
-- Steal checks (2026-10-07, 82-pawn raid, Raider Approach Lag Fix not loaded): 2.5-2.8 ms per check with the cache off, 1.4-1.5 ms with it on. Once stealing, item value computations dropped by about half.
-- Pawn graphics (2026-10-07): 140-pawn raid arriving on screen without the warmup, 737 ms frame (708 ms building 140 render trees); 143-148-pawn raids with it, every pawn arrived with its graphics built and the arrival frame took 29-35 ms. Resetting the graphics of every pawn on the map: 704 ms frame without the warmup, at most 62 ms with it.
-- Generation steps (2026-10-07, 138-165-pawn raids, no profiler): 26.6-25.0 ms on average with the apparel cache and the shared container scan, down from about 33-36 ms; HAR apparel generation went from about 12 ms to about 7 ms per pawn.</description>
+
+2026-10-07: steal checks, pawn graphics, lighter steps
+- Steal checks (82-pawn raid, Raider Approach Lag Fix not loaded): 2.5-2.8 ms per check with the cache off, 1.4-1.5 ms with it on. Once stealing, item value computations dropped by about half.
+- Pawn graphics: 140-pawn raid arriving on screen without the warmup, 737 ms frame (708 ms building 140 render trees); 143-148-pawn raids with it, every pawn arrived with its graphics built and the arrival frame took 29-35 ms. Resetting the graphics of every pawn on the map: 704 ms frame without the warmup, at most 62 ms with it.
+- Generation steps (138-165-pawn raids, no profiler): 25.0-26.6 ms on average with the apparel cache and the shared container scan, down from about 33-36 ms; HAR apparel generation went from about 12 ms to about 7 ms per pawn.</description>
   <modDependencies>
     <li><packageId>brrainz.harmony</packageId><displayName>Harmony</displayName><steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl></li>
   </modDependencies>
