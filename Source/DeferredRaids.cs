@@ -10,6 +10,7 @@ using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 using Verse.AI;
+using Verse.AI.Group;
 
 namespace DeferredRaidGeneration
 {
@@ -240,6 +241,7 @@ namespace DeferredRaidGeneration
             DiedThoughtHolders = null;
             Staggered.Clear();
             UnspawnedCache.Clear();
+            StealValueCache.Clear();
         }
 
         /// <summary>
@@ -665,6 +667,200 @@ namespace DeferredRaidGeneration
                 }
             }
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Assaulting raiders decide whether to start stealing by having every raider look for the most valuable item
+    /// within 7 cells (Trigger_HighValueThingsAround, every 120 ticks); once stealing, the lord repeats that search for
+    /// every raider still fighting (LordToil_StealCover, every 181 ticks and whenever duties are updated). Each search
+    /// computes the market value of every haulable thing it passes before checking whether it can be stolen, so raiders
+    /// standing close together compute the same items (including corpses, worth the whole pawn) over and over. Inside
+    /// one such loop over the lord's pawns each item's value is computed once and reused; nothing in the loop changes
+    /// item values. Same idea as Raider Approach Lag Fix by OldManYoung, extended to the stealing phase.
+    /// </summary>
+    public static class StealValueCache
+    {
+        private const int ReportIntervalTicks = 600;
+
+        private static int depth;
+        private static readonly Dictionary<Thing, float> cache = new Dictionary<Thing, float>();
+
+        /// <summary>Debug switch for A/B tests against vanilla behaviour; loops are still timed. Not saved.</summary>
+        public static bool Disabled;
+
+        // Development-mode statistics, logged about every ReportIntervalTicks while loops run.
+        private static long loopStart;
+        private static int loops;
+        private static double loopMsTotal;
+        private static double loopMsMax;
+        private static int lookups;
+        private static int computed;
+        private static int windowStartTick = -1;
+
+        public static bool Active => depth > 0 && !Disabled;
+
+        [DebugAction("Deferred Raid Generation", "Toggle steal value cache (A/B test)", allowedGameStates = AllowedGameStates.Playing)]
+        private static void ToggleCache()
+        {
+            Disabled = !Disabled;
+            Messages.Message(Disabled ? "Steal value cache: OFF (vanilla)." : "Steal value cache: ON.",
+                MessageTypeDefOf.NeutralEvent, false);
+        }
+
+        /// <summary>
+        /// Sends every assaulting lord on the current map into its stealing toil, as Trigger_HighValueThingsAround would.
+        /// Raiders without anything worth stealing nearby keep assaulting, and that toil keeps searching for them.
+        /// </summary>
+        [DebugAction("Deferred Raid Generation", "Raiders start stealing (test)", allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        private static void StartStealing()
+        {
+            int count = 0;
+            foreach (Lord lord in Find.CurrentMap.lordManager.lords.ToList())
+            {
+                if (lord.CurLordToil is LordToil_StealCover)
+                    continue;
+                LordToil steal = lord.Graph.lordToils.FirstOrDefault(t => t is LordToil_StealCover cover && cover.cover);
+                if (steal == null)
+                    continue;
+                lord.GotoToil(steal);
+                count++;
+            }
+            Messages.Message($"Raiders start stealing: {count} lord(s).", MessageTypeDefOf.NeutralEvent, false);
+        }
+
+        public static void Enter()
+        {
+            if (depth++ == 0 && Prefs.DevMode)
+                loopStart = Stopwatch.GetTimestamp();
+        }
+
+        public static void Exit()
+        {
+            if (depth > 0)
+                depth--;
+            if (depth > 0)
+                return;
+            cache.Clear();
+            if (Prefs.DevMode && loopStart != 0)
+            {
+                double ms = (Stopwatch.GetTimestamp() - loopStart) * 1000.0 / Stopwatch.Frequency;
+                loopStart = 0;
+                loops++;
+                loopMsTotal += ms;
+                loopMsMax = Math.Max(loopMsMax, ms);
+                Report();
+            }
+        }
+
+        public static void Clear()
+        {
+            depth = 0;
+            cache.Clear();
+            loopStart = 0;
+            ResetStats();
+            windowStartTick = -1;
+        }
+
+        public static bool TryGet(Thing thing, out float value)
+        {
+            if (Prefs.DevMode)
+                lookups++;
+            return cache.TryGetValue(thing, out value);
+        }
+
+        public static void Store(Thing thing, float value)
+        {
+            if (Prefs.DevMode)
+                computed++;
+            cache[thing] = value;
+        }
+
+        private static void Report()
+        {
+            int tick = Find.TickManager?.TicksGame ?? 0;
+            if (windowStartTick < 0 || tick < windowStartTick)
+                windowStartTick = tick;
+            if (tick - windowStartTick < ReportIntervalTicks)
+                return;
+            string reuse = Disabled ? "cache off" : $"{lookups} item values looked up, {computed} computed";
+            Log.Message($"[DeferredRaidGeneration] Steal searches in the last {tick - windowStartTick} ticks: {loops} loops, "
+                + $"avg {loopMsTotal / loops:F2} ms, max {loopMsMax:F2} ms; {reuse}.");
+            ResetStats();
+            windowStartTick = tick;
+        }
+
+        private static void ResetStats()
+        {
+            loops = 0;
+            loopMsTotal = 0;
+            loopMsMax = 0;
+            lookups = 0;
+            computed = 0;
+        }
+    }
+
+    [HarmonyPatch(typeof(StealAIUtility), nameof(StealAIUtility.TotalMarketValueAround))]
+    public static class Patch_StealAIUtility_TotalMarketValueAround_Scope
+    {
+        public static void Prefix() => StealValueCache.Enter();
+
+        public static Exception Finalizer(Exception __exception)
+        {
+            StealValueCache.Exit();
+            return __exception;
+        }
+    }
+
+    /// <summary>The periodic search for raiders still fighting; same condition as the vanilla loop.</summary>
+    [HarmonyPatch(typeof(LordToil_DoOpportunisticTaskOrCover), nameof(LordToil_DoOpportunisticTaskOrCover.LordToilTick))]
+    public static class Patch_LordToil_DoOpportunisticTaskOrCover_LordToilTick_Scope
+    {
+        public static void Prefix(LordToil_DoOpportunisticTaskOrCover __instance, out bool __state)
+        {
+            __state = __instance is LordToil_StealCover && __instance.cover && Find.TickManager.TicksGame % 181 == 0;
+            if (__state)
+                StealValueCache.Enter();
+        }
+
+        public static Exception Finalizer(Exception __exception, bool __state)
+        {
+            if (__state)
+                StealValueCache.Exit();
+            return __exception;
+        }
+    }
+
+    [HarmonyPatch(typeof(LordToil_DoOpportunisticTaskOrCover), nameof(LordToil_DoOpportunisticTaskOrCover.UpdateAllDuties))]
+    public static class Patch_LordToil_DoOpportunisticTaskOrCover_UpdateAllDuties_Scope
+    {
+        public static void Prefix(LordToil_DoOpportunisticTaskOrCover __instance, out bool __state)
+        {
+            __state = __instance is LordToil_StealCover;
+            if (__state)
+                StealValueCache.Enter();
+        }
+
+        public static Exception Finalizer(Exception __exception, bool __state)
+        {
+            if (__state)
+                StealValueCache.Exit();
+            return __exception;
+        }
+    }
+
+    [HarmonyPatch(typeof(StealAIUtility), nameof(StealAIUtility.GetValue))]
+    public static class Patch_StealAIUtility_GetValue
+    {
+        public static bool Prefix(Thing thing, ref float __result)
+        {
+            return !(StealValueCache.Active && thing != null && StealValueCache.TryGet(thing, out __result));
+        }
+
+        public static void Postfix(Thing thing, float __result, bool __runOriginal)
+        {
+            if (__runOriginal && StealValueCache.Active && thing != null)
+                StealValueCache.Store(thing, __result);
         }
     }
 
