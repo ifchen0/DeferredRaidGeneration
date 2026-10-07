@@ -24,9 +24,9 @@ Removes most of the multi-second freeze when a large raid fires.
 [*]Safe to add to or remove from an existing save.
 [/list]
 
-[h2]Test report[/h2]One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 170 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs.
+[h2]Test report[/h2]One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 170 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs. Also active: Performance Optimizer, Performance - Slower Pawn Tick Rate, Performance Esmolas, Better GC.
 
-[h3]2026-10-05: raid generation[/h3]Some runs had a profiling mod attached (a little overhead) and they span several builds, so delays differ: the current build waits 0.25 s per pawn, up to about 20 s.
+[h3]2026-10-05: raid generation[/h3]Some runs had a profiler attached and span several builds; the current build waits 0.25 s per pawn, up to about 20 s.
 
 [b]Vanilla (deferral off)[/b]
 [list]
