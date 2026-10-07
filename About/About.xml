@@ -20,6 +20,7 @@ Also
 - When a deferred raid arrives, raiders start looking for their first job spread over half a second instead of all in the same tick.
 - The "remove died thoughts" check on spawn (PawnDiedOrDownedThoughtsUtility.RemoveDiedThoughts) only looks at pawns that remember one of the raiders, instead of every pawn in the world.
 - Raiders check every 2 seconds whether there is enough worth stealing around them, and once they start stealing they look for a target for each raider every 3 seconds. Each check computes the market value of every item near every raider, so raiders standing together compute the same items (corpses included, which are worth the whole pawn) again and again. Within one check each item's value is now computed once; what raiders steal is unchanged. Same idea as Raider Approach Lag Fix by OldManYoung, extended to the stealing phase. The two work together, but this mod already covers what it does.
+- The game builds a pawn's graphics (its render tree) the first time the pawn is drawn, which costs 2-5 ms per pawn with Humanoid Alien Races, so moving the camera onto a freshly arrived raid of 140 pawns froze the game for about 0.7 s. Deferred raids now build each pawn's graphics in the same step that generates it. Other pawns on the current map that have not been drawn yet (trader caravans, small raids, after loading a save) are prepared in the background at about 1 ms per frame.
 
 Notes
 
@@ -27,7 +28,7 @@ Notes
 - With Dynamic Diplomacy - Continued, the armies of a full-simulation conquest arena are generated the same way. The arena map itself is still generated in one go when the battle starts.
 - Each generation step still costs one pawn's generation time (usually 15-30 ms, occasionally over 100 ms), so you may notice a light stutter while a large raid is being prepared. A single pawn cannot be split further.
 - An autosave that comes due while pawns are being generated waits until they are done (at most a minute), then saves right away. A manual save in that window finishes them first, so nothing is lost; that save takes as long as the raid would have in vanilla.
-- Development mode adds debug actions "Toggle deferral (A/B test)", "Autosave in ~5 s (test)", "Toggle steal value cache (A/B test)" and "Raiders start stealing (test)", and logs each deferred group and a summary of steal checks.
+- Development mode adds debug actions "Toggle deferral (A/B test)", "Autosave in ~5 s (test)", "Toggle steal value cache (A/B test)", "Raiders start stealing (test)", "Toggle render warmup (A/B test)" and "Reset pawn graphics on map (test)", and logs each deferred group, a summary of steal checks and frames where drawing pawns took 25 ms or more.
 - Safe to add to or remove from an existing save.
 
 Test report (2026-10-05)
@@ -51,7 +52,8 @@ With this mod
 - Loading a save while groups were still being generated: nothing carried over into the loaded game.
 - Autosave due while a 98-pawn raid was being generated: it waited 19.1 s until the raid arrived, then saved.
 - Trader caravans of 14-19 pawns: 0.27-0.52 s, not deferred; the container-scan cache makes little measurable difference with only one map.
-- Steal checks (2026-10-07, 82-pawn raid, Raider Approach Lag Fix not loaded): 2.5-2.8 ms per check with the cache off, 1.4-1.5 ms with it on. Once stealing, item value computations dropped by about half.</description>
+- Steal checks (2026-10-07, 82-pawn raid, Raider Approach Lag Fix not loaded): 2.5-2.8 ms per check with the cache off, 1.4-1.5 ms with it on. Once stealing, item value computations dropped by about half.
+- Pawn graphics (2026-10-07): 140-pawn raid arriving on screen without the warmup, 737 ms frame (708 ms building 140 render trees); 143-148-pawn raids with it, every pawn arrived with its graphics built and the arrival frame took 29-35 ms. Resetting the graphics of every pawn on the map: 704 ms frame without the warmup, at most 62 ms with it.</description>
   <modDependencies>
     <li><packageId>brrainz.harmony</packageId><displayName>Harmony</displayName><steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl></li>
   </modDependencies>

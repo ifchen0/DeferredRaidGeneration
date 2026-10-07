@@ -355,7 +355,11 @@ namespace DeferredRaidGeneration
             PendingGeneration generation = pending[0];
             float stepStart = Time.realtimeSinceStartup;
             var watch = Stopwatch.StartNew();
+            int before = generation.Generated.Count;
             generation.GenerateNext();
+            // Build its graphics now too, or every pawn of the group builds them in the frame it is first seen.
+            if (generation.Generated.Count > before)
+                PawnRenderWarmup.Warm(generation.Generated[generation.Generated.Count - 1]);
             // Measured from the start of the step, so the step's own time is part of the interval and the total
             // stays close to MaxSeconds; a slow step still gets IdleFactor times its own duration of rest.
             float interval = Math.Min(SecondsPerPawn, MaxSeconds / Math.Max(1, generation.Count));
@@ -387,6 +391,8 @@ namespace DeferredRaidGeneration
             ReplayPawns = new HashSet<Pawn>(generation.Generated);
             DiedThoughtHolders = null;
             Staggered.Clear();
+            // ReleaseUnused clears Generated, so keep a copy to count the arrivals afterwards.
+            List<Pawn> generated = Prefs.DevMode ? generation.Generated.ToList() : null;
             var watch = Stopwatch.StartNew();
             try
             {
@@ -405,7 +411,8 @@ namespace DeferredRaidGeneration
                 ReleaseUnused(generation);
             }
             if (Prefs.DevMode)
-                Log.Message($"[DeferredRaidGeneration] Executed {generation.Label} in {watch.Elapsed.TotalMilliseconds:F0} ms.");
+                Log.Message($"[DeferredRaidGeneration] Executed {generation.Label} in {watch.Elapsed.TotalMilliseconds:F0} ms; "
+                    + $"{generated.Count(p => p.Spawned && p.Drawer.renderer.renderTree.Resolved)} of {generated.Count(p => p.Spawned)} spawned pawns arrived with graphics built.");
         }
 
         private static void StartStaggeredWaits()
