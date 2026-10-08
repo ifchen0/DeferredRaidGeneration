@@ -5,62 +5,53 @@
   <packageId>ifchen0.deferredraidgeneration</packageId>
   <url>https://github.com/ifchen0/DeferredRaidGeneration</url>
   <supportedVersions><li>1.6</li></supportedVersions>
-  <description>Warning: this mod was written with AI coding tools (Claude Code). It changes when and how raid pawns are created: large raids are generated over several seconds, then the vanilla raid code runs a second time with those pawns. Nothing is stored in your save. Mods that change a raid as it starts (for example its faction or size) may lose that effect on deferred raids; mods that act after the raid arrives are not affected. Handled so far: Breaking News' mechanoid advance. Tested in one late-game colony only. If raids or Dynamic Diplomacy battles behave oddly, disable this mod before reporting the issue to other mod authors.
+  <description>Warning: this mod was written with AI coding tools (Claude Code). It changes when and how raid and quest pawns are created: large groups are generated over several seconds, then the vanilla raid or quest code runs a second time with those pawns. Nothing is stored in your save. Mods that change a raid as it starts (for example its faction or size) may lose that effect on deferred raids; mods that act after the raid arrives are not affected. Handled so far: Breaking News' mechanoid advance. Tested in one late-game colony only. If raids, beggar/refugee quests or Dynamic Diplomacy battles behave oddly, disable this mod before reporting the issue to other mod authors.
 
-Removes most of the multi-second freeze when a large raid fires.
+Removes most of the multi-second freeze when a large raid fires, and the pause when large beggar or refugee groups show up.
 
 Seconds of freeze before the raid letter
 Normally every raider is generated in the same frame the raid fires, so a raid of 100+ pawns freezes the game for several seconds before the letter shows up. In a late-game colony each pawn costs 15-35 ms to generate, and the game also repeats a scan of every container on every map (MapPawns.AllPawnsUnspawned) dozens of times per pawn.
 
 Fix: When a raid of 5 or more pawns fires, its faction, strategy, arrival mode and pawn kinds are decided by the vanilla code as usual. The pawns are then generated one at a time, a quarter of a second apart, while the game keeps running. Once all of them exist, the vanilla raid code runs again and receives these pawns instead of generating new ones, so arrival, letter, lords and loot are unchanged. The raid shows up later than it otherwise would: about 0.25 s of real time per pawn, at most about 20 s.
 
+Beggar and refugee groups
+The beggar quest and the refugee quest bring a group sized to your colony (a quarter to three quarters of your colonists, plus their generated relatives), all generated in the frame the quest appears. Refugees also all join your faction and spawn in the frame you accept.
+
+Fix: Groups of 5 or more are generated the same way as raids: group size, children and their temporary faction are decided first, the pawns are generated over a few seconds, then the vanilla quest is created with them. After you accept, the first refugee joins at once and the others join and walk in one per frame.
+
 Also
 
-- For all pawn generation, including trader caravans, raids under 5 pawns and quest raids (which are not deferred), the container scan is done once per map for each pawn or pawn group instead of dozens of times. Steps of a deferred group share it for up to a second.
-- With Humanoid Alien Races: before generating starting apparel, HAR copies the full list of apparel/material combinations and removes the ones the pawn's race may not wear, using a slow lookup, about twice per pawn. The filtered list is now built once per race and reused (same HAR rule, same result), for all pawn generation.
-- When a deferred raid arrives, raiders start looking for their first job spread over half a second instead of all in the same tick.
-- The "remove died thoughts" check on spawn (PawnDiedOrDownedThoughtsUtility.RemoveDiedThoughts) only looks at pawns that remember one of the raiders, instead of every pawn in the world.
-- Raiders check every 2 seconds whether there is enough worth stealing around them, and once they start stealing they look for a target for each raider every 3 seconds. Each check computes the market value of every item near every raider, so raiders standing together compute the same items (corpses included, which are worth the whole pawn) again and again. Within one check each item's value is now computed once; what raiders steal is unchanged. Same idea as Raider Approach Lag Fix by OldManYoung, extended to the stealing phase. The two work together, but this mod already covers what it does.
-- The game builds a pawn's graphics (its render tree) the first time the pawn is drawn, which costs 2-5 ms per pawn with Humanoid Alien Races, so moving the camera onto a freshly arrived raid of 140 pawns froze the game for about 0.7 s. Deferred raids now build each pawn's graphics in the same step that generates it. Other pawns on the current map that have not been drawn yet (trader caravans, small raids, after loading a save) are prepared in the background at about 1 ms per frame.
+- For all pawn generation, the container scan is done once per map for each pawn or pawn group instead of dozens of times.
+- With Humanoid Alien Races, starting apparel no longer copies and filters the full apparel list for every pawn: the race-filtered list is built once per race (same HAR rule, same result).
+- Pawn graphics are built the first time a pawn is drawn, 2-5 ms each with HAR. Deferred pawns get them during generation; other pawns on the map are prepared in the background at about 1 ms per frame.
+- Arriving groups start looking for their first job spread over half a second, and the "remove died thoughts" check on spawn only looks at pawns that remember one of them, instead of every pawn in the world.
+- Raider steal checks compute each nearby item's market value once per check instead of once per raider (corpses included). Same idea as Raider Approach Lag Fix by OldManYoung, extended to the stealing phase; the two work together.
 
 Notes
 
-- Applies to enemy and friendly raids with at least 5 pawns. Smaller raids, trader caravans, quest raids, and raid types that create their own threats (for example mechanoid sieges) run immediately as in vanilla.
+- Applies to enemy and friendly raids and beggar/refugee quests with at least 5 pawns. Smaller groups, trader caravans, quest raids, and raid types that create their own threats (for example mechanoid sieges) run immediately as in vanilla.
 - With Dynamic Diplomacy - Continued, the armies of a full-simulation conquest arena are generated the same way. The arena map itself is still generated in one go when the battle starts.
-- Each generation step still costs one pawn's generation time (usually 15-30 ms, occasionally over 100 ms), so you may notice a light stutter while a large raid is being prepared. A single pawn cannot be split further. While you move or zoom the camera, steps wait until it has been still for 0.4 s, so the stutter does not land in the middle of a pan; a group waits at most 10 s in total this way.
-- An autosave that comes due while pawns are being generated waits until they are done (at most a minute), then saves right away. A manual save in that window finishes them first, so nothing is lost; that save takes as long as the raid would have in vanilla.
-- Development mode adds debug actions "Toggle deferral (A/B test)", "Autosave in ~5 s (test)", "Toggle steal value cache (A/B test)", "Raiders start stealing (test)", "Toggle render warmup (A/B test)", "Reset pawn graphics on map (test)", "Toggle apparel pair cache (A/B test)" and "Toggle camera wait (A/B test)", and logs each deferred group, a summary of steal checks and frames where drawing pawns took 25 ms or more.
+- Each generation step still costs one pawn's generation time (usually 15-30 ms, occasionally over 100 ms), so you may notice a light stutter while a large group is being prepared. While you move or zoom the camera, steps wait until it has been still for 0.4 s (at most 10 s per group).
+- An autosave that comes due while pawns are being generated waits until they are done (at most a minute). A manual save in that window finishes them first, so nothing is lost.
 - Safe to add to or remove from an existing save.
 
 Test report
 One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 170 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs. Also active: Performance Optimizer, Performance - Slower Pawn Tick Rate, Performance Esmolas, Better GC.
 
-2026-10-05: raid generation
-Some runs had a profiler attached and span several builds; the current build waits 0.25 s per pawn, up to about 20 s.
+Raids (2026-10-05, 2026-10-07)
 
-Vanilla (deferral off)
+- Vanilla: friendly raids of 70 / 93 pawns froze for 2.9 / 2.6 s; Dynamic Diplomacy arenas of 234-258 pawns for 12.3 s, 31.6 s with several old arena maps loaded.
+- Enemy raids of 10-144 pawns: arrival pause 19-140 ms; friendly raids of 23-96 pawns: 17-57 ms. 111 pawns were generated over 21.5 s.
+- Generation steps: 25-27 ms on average in 138-165-pawn raids; worst single step 320 ms (a garbage collection).
+- Dynamic Diplomacy arenas of 255-324 pawns: armies generated over 34-73 s; the battle start (map generation) still paused 1.7-7 s.
+- Saving or loading while groups were pending: saved groups arrived intact, nothing carried over into a loaded game; a due autosave waited 19.1 s, then saved.
+- Pawn graphics: a 140-pawn raid arriving on screen took a 737 ms frame without the warmup, 29-35 ms with it.
+- Steal checks (82-pawn raid): 2.5-2.8 ms per check without the cache, 1.4-1.5 ms with it.
 
-- Friendly raid, 93 pawns: 2.6 s freeze.
-- Friendly raid, 70 pawns: 2.9 s freeze.
-- Dynamic Diplomacy conquest arena, 234-258 pawns: 12.3-12.4 s freeze; 31.6 s once several old arena maps were still loaded (the container scan alone took 19 s).
+Beggar and refugee quests (2026-10-09)
 
-With this mod
-
-- Enemy raids of 10 / 11 / 15 / 53 / 63 / 111 / 144 pawns: arrived with a pause of 58 / 120 / 19 / 137 / 54 / 140 / 91 ms.
-- Current build: 11 pawns generated over 3.1 s, 111 pawns over 21.5 s (a little over 20 s because each step starts on a new frame).
-- Enemy raid of 21 pawns by drop pods to the colony center: generated over 5.4 s, arrival pause 45 ms.
-- Friendly raids of 23 / 51 / 62 / 96 pawns: arrival pause 38 / 57 / 50 / 17 ms.
-- Generation steps: 13-20 ms on average (40 ms for the first raid after starting the game), worst single step 27-320 ms in raids (the 320 ms step was a garbage collection) and once 1.5 s in a Dynamic Diplomacy arena.
-- Dynamic Diplomacy arenas of 255-324 pawns: armies generated over 34-73 s while playing; the battle start (arena map generation and spawning) still paused the game for 1.7-7 s.
-- Saving while a raid and an arena were still being generated: both were finished before the save; after loading, the arena was intact with all 317 pawns on its map and nothing left behind.
-- Loading a save while groups were still being generated: nothing carried over into the loaded game.
-- Autosave due while a 98-pawn raid was being generated: it waited 19.1 s until the raid arrived, then saved.
-- Trader caravans of 14-19 pawns: 0.27-0.52 s, not deferred; the container-scan cache makes little measurable difference with only one map.
-
-2026-10-07: steal checks, pawn graphics, lighter steps
-- Steal checks (82-pawn raid, Raider Approach Lag Fix not loaded): 2.5-2.8 ms per check with the cache off, 1.4-1.5 ms with it on. Once stealing, item value computations dropped by about half.
-- Pawn graphics: 140-pawn raid arriving on screen without the warmup, 737 ms frame (708 ms building 140 render trees); 143-148-pawn raids with it, every pawn arrived with its graphics built and the arrival frame took 29-35 ms. Resetting the graphics of every pawn on the map: 704 ms frame without the warmup, at most 62 ms with it.
-- Generation steps (138-165-pawn raids, no profiler): 25.0-26.6 ms on average with the apparel cache and the shared container scan, down from about 33-36 ms; HAR apparel generation went from about 12 ms to about 7 ms per pawn.</description>
+- Vanilla: groups of 12-30 froze for 0.74-1.07 s when the quest appeared; accepting 43 refugees froze for 0.59 s.
+- With this mod: groups of 12-52 generated over 6-24 s (steps 11-31 ms on average), quest appeared with a 0.2-0.35 s pause; accepting 51 refugees took 78 ms, all walked in over 2.6 s.</description>
   <modDependencies>
     <li><packageId>brrainz.harmony</packageId><displayName>Harmony</displayName><steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl></li>
   </modDependencies>

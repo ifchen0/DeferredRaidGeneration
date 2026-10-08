@@ -8,6 +8,7 @@ using RimWorld.Planet;
 using RimWorld.QuestGen;
 using UnityEngine;
 using Verse;
+using Verse.AI;
 
 namespace DeferredRaidGeneration
 {
@@ -320,8 +321,158 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>
+    /// A group of pawns that joins the player when its quest is accepted (refugees). Vanilla makes every pawn join
+    /// the player's faction and spawns them all in the accept frame; here the first pawn does so at once (so the
+    /// letter and quest proceed as usual) and the others join and walk in one per frame, still non-player until then.
+    /// </summary>
+    public class StaggeredArrival
+    {
+        public readonly List<Pawn> Waiting = new List<Pawn>();
+        /// <summary>Pawns whose SetFaction call to the player was held back.</summary>
+        public readonly HashSet<Pawn> FactionHeld = new HashSet<Pawn>();
+        public HashSet<Pawn> Group;
+        public List<Pawn> DiedThoughtHolders;
+        public List<Pawn> QuestPawns;
+        public Map Map;
+        public IntVec3 SpawnCenter;
+        public Rot4 SpawnRotation;
+        public bool Queued;
+        public int Arrived;
+        public float StartTime = Time.realtimeSinceStartup;
+    }
+
+    public static class StaggeredArrivals
+    {
+        /// <summary>Set while QuestPart_PawnsArrive runs for a group that will arrive one pawn per frame.</summary>
+        public static StaggeredArrival Current;
+
+        private static readonly List<StaggeredArrival> queue = new List<StaggeredArrival>();
+
+        public static bool HasPending => queue.Count > 0;
+
+        public static void Clear()
+        {
+            Current = null;
+            queue.Clear();
+        }
+
+        /// <summary>Called from QuestPart_PawnsArrive.Notify_QuestSignalReceived for a group joining the player.</summary>
+        public static void Begin(QuestPart_PawnsArrive part)
+        {
+            PawnsArrivalModeDef mode = part.arrivalMode ?? PawnsArrivalModeDefOf.EdgeWalkIn;
+            if (!part.joinPlayer || mode.Worker.GetType() != typeof(PawnsArrivalModeWorker_EdgeWalkIn))
+                return;
+            var arrival = new StaggeredArrival { Group = DeferredRaids.ReplayPawns, QuestPawns = part.pawns };
+            bool first = true;
+            foreach (Pawn pawn in part.pawns)
+            {
+                if (pawn.Destroyed)
+                    continue;
+                if (first)
+                    first = false;
+                else
+                    arrival.Waiting.Add(pawn);
+            }
+            if (arrival.Waiting.Count > 0)
+                Current = arrival;
+        }
+
+        /// <summary>Queues the held pawns, or lets them join now if vanilla never reached the arrival.</summary>
+        public static void End()
+        {
+            StaggeredArrival arrival = Current;
+            Current = null;
+            if (arrival == null)
+                return;
+            if (arrival.Queued)
+            {
+                arrival.DiedThoughtHolders = DeferredRaids.DiedThoughtHolders;
+                queue.Add(arrival);
+                return;
+            }
+            foreach (Pawn pawn in arrival.FactionHeld)
+            {
+                if (!pawn.Destroyed && pawn.Faction != Faction.OfPlayer)
+                    pawn.SetFaction(Faction.OfPlayer);
+            }
+        }
+
+        /// <summary>Lets the next waiting pawn join and walk in. Returns false when nothing is waiting.</summary>
+        public static bool Step()
+        {
+            if (queue.Count == 0)
+                return false;
+            StaggeredArrival arrival = queue[0];
+            if (arrival.Waiting.Count == 0)
+            {
+                queue.RemoveAt(0);
+                if (Prefs.DevMode)
+                    Log.Message($"[DeferredRaidGeneration] {arrival.Arrived + 1} quest pawns joined over {Time.realtimeSinceStartup - arrival.StartTime:F1} s.");
+                return queue.Count > 0;
+            }
+            Pawn pawn = arrival.Waiting[0];
+            arrival.Waiting.RemoveAt(0);
+            DeferredRaids.Staggered.Clear();
+            DeferredRaids.ReplayPawns = arrival.Group;
+            DeferredRaids.DiedThoughtHolders = arrival.DiedThoughtHolders;
+            try
+            {
+                Arrive(arrival, pawn);
+            }
+            catch (Exception e)
+            {
+                Log.Error($"[DeferredRaidGeneration] Staggered arrival of {pawn} failed: " + e);
+            }
+            finally
+            {
+                // Jobs ended while joining were not followed by a new search; give those pawns a short wait instead.
+                DeferredRaids.StartStaggeredWaits();
+                DeferredRaids.Staggered.Clear();
+                arrival.DiedThoughtHolders = DeferredRaids.DiedThoughtHolders;
+                DeferredRaids.ReplayPawns = null;
+                DeferredRaids.DiedThoughtHolders = null;
+            }
+            return true;
+        }
+
+        /// <summary>What vanilla does for this pawn in the accept frame: join, then walk in near the spawn center.</summary>
+        private static void Arrive(StaggeredArrival arrival, Pawn pawn)
+        {
+            if (pawn.Destroyed || pawn.Spawned)
+                return;
+            // A pawn that died, left the quest or lost its map meanwhile stays as it is.
+            if (pawn.Dead || !Find.Maps.Contains(arrival.Map) || !arrival.QuestPawns.Contains(pawn))
+                return;
+            if (arrival.FactionHeld.Contains(pawn) && pawn.Faction != Faction.OfPlayer)
+                pawn.SetFaction(Faction.OfPlayer);
+            IntVec3 loc = CellFinder.RandomClosewalkCellNear(arrival.SpawnCenter, arrival.Map, 8);
+            GenSpawn.Spawn(pawn, loc, arrival.Map, arrival.SpawnRotation);
+            arrival.Arrived++;
+            if (pawn.jobs != null && pawn.jobs.curJob == null)
+            {
+                Job wait = JobMaker.MakeJob(JobDefOf.Wait);
+                wait.expiryInterval = Rand.RangeInclusive(1, 30);
+                pawn.jobs.StartJob(wait);
+            }
+        }
+
+        /// <summary>Lets everyone still waiting arrive now (used before saving).</summary>
+        public static void FlushAll()
+        {
+            while (queue.Count > 0)
+            {
+                StaggeredArrival arrival = queue[0];
+                while (arrival.Waiting.Count > 0)
+                    Step();
+                queue.Remove(arrival);
+            }
+        }
+    }
+
+    /// <summary>
     /// A quest group that arrives later (refugees arrive when the quest is accepted) gets the same arrival treatment
     /// as a replayed group: the died-thoughts shortcut while spawning, and first job searches spread over a few ticks.
+    /// A group joining the player also arrives one pawn per frame (StaggeredArrivals).
     /// </summary>
     [HarmonyPatch(typeof(QuestPart_PawnsArrive), nameof(QuestPart_PawnsArrive.Notify_QuestSignalReceived))]
     public static class Patch_QuestPart_PawnsArrive_Group
@@ -336,6 +487,7 @@ namespace DeferredRaidGeneration
             DeferredRaids.ReplayPawns = new HashSet<Pawn>(__instance.pawns);
             DeferredRaids.DiedThoughtHolders = null;
             DeferredRaids.Staggered.Clear();
+            StaggeredArrivals.Begin(__instance);
         }
 
         public static Exception Finalizer(Exception __exception, QuestPart_PawnsArrive __instance, bool __state)
@@ -344,6 +496,7 @@ namespace DeferredRaidGeneration
                 return __exception;
             try
             {
+                StaggeredArrivals.End();
                 // Arriving pawns without a lord pick their first job on their first tick, all in the same tick.
                 foreach (Pawn pawn in __instance.pawns)
                 {
@@ -354,11 +507,52 @@ namespace DeferredRaidGeneration
             }
             finally
             {
+                StaggeredArrivals.Current = null;
                 DeferredRaids.ReplayPawns = null;
                 DeferredRaids.DiedThoughtHolders = null;
                 DeferredRaids.Staggered.Clear();
             }
             return __exception;
+        }
+    }
+
+    /// <summary>Holds back joining the player for the pawns of a staggered arrival other than the first.</summary>
+    [HarmonyPatch(typeof(Pawn), nameof(Pawn.SetFaction))]
+    public static class Patch_Pawn_SetFaction_StaggeredArrival
+    {
+        [HarmonyPriority(Priority.First)]
+        public static bool Prefix(Pawn __instance, Faction newFaction)
+        {
+            StaggeredArrival arrival = StaggeredArrivals.Current;
+            if (arrival == null || arrival.Queued || newFaction != Faction.OfPlayer || !arrival.Waiting.Contains(__instance))
+                return true;
+            arrival.FactionHeld.Add(__instance);
+            return false;
+        }
+    }
+
+    /// <summary>Spawns only the first pawn of a staggered arrival and remembers where the others walk in.</summary>
+    [HarmonyPatch(typeof(PawnsArrivalModeWorker_EdgeWalkIn), nameof(PawnsArrivalModeWorker_EdgeWalkIn.Arrive))]
+    public static class Patch_PawnsArrivalModeWorker_EdgeWalkIn_Arrive
+    {
+        [HarmonyPriority(Priority.First)]
+        public static bool Prefix(List<Pawn> pawns, IncidentParms parms)
+        {
+            StaggeredArrival arrival = StaggeredArrivals.Current;
+            if (arrival == null || arrival.Queued || pawns != arrival.QuestPawns || !(parms.target is Map map))
+                return true;
+            arrival.Map = map;
+            arrival.SpawnCenter = parms.spawnCenter;
+            arrival.SpawnRotation = parms.spawnRotation;
+            arrival.Queued = true;
+            foreach (Pawn pawn in pawns)
+            {
+                if (arrival.Waiting.Contains(pawn))
+                    continue;
+                IntVec3 loc = CellFinder.RandomClosewalkCellNear(parms.spawnCenter, map, 8);
+                GenSpawn.Spawn(pawn, loc, map, parms.spawnRotation);
+            }
+            return false;
         }
     }
 }

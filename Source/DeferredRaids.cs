@@ -233,7 +233,7 @@ namespace DeferredRaidGeneration
 
         private readonly List<PendingGeneration> pending = new List<PendingGeneration>();
 
-        public bool HasPending => pending.Count > 0;
+        public bool HasPending => pending.Count > 0 || StaggeredArrivals.HasPending;
         private float nextStepTime;
         // Pawn generated in the last step whose graphics are built in the next frame, so the two costs never share a frame.
         private Pawn warmNext;
@@ -286,6 +286,7 @@ namespace DeferredRaidGeneration
             ReplayPawns = null;
             DiedThoughtHolders = null;
             Staggered.Clear();
+            StaggeredArrivals.Clear();
             UnspawnedCache.Clear();
             StealValueCache.Clear();
         }
@@ -434,6 +435,9 @@ namespace DeferredRaidGeneration
                 pending[0].CameraWaitSeconds += frameSeconds;
                 return;
             }
+            // Quest pawns joining one per frame come first; they already exist and only need to walk in.
+            if (!LongEventHandler.AnyEventNowOrWaiting && StaggeredArrivals.Step())
+                return;
             if (warmNext != null && !LongEventHandler.AnyEventNowOrWaiting)
             {
                 if (!warmNext.Destroyed)
@@ -1151,6 +1155,7 @@ namespace DeferredRaidGeneration
         {
             try
             {
+                StaggeredArrivals.FlushAll();
                 DeferredRaids.Instance?.FlushAll();
             }
             catch (Exception e)
