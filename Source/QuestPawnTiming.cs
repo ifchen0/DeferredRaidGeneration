@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
+using System.Reflection;
 using HarmonyLib;
 using LudeonTK;
 using RimWorld;
@@ -100,20 +102,134 @@ namespace DeferredRaidGeneration
         }
     }
 
+    /// <summary>
+    /// Breakdown of a quest arrival: joining the player's faction, the arrival itself and the arrival letter.
+    /// Development mode only; the Harmony owners of Pawn.SetFaction are listed once.
+    /// </summary>
+    public static class ArrivalBreakdown
+    {
+        public static bool Active;
+        public static double SetFactionMs, ArriveMs, LetterMs;
+        private static bool ownersLogged;
+
+        public static double Since(long start) => (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency;
+
+        public static void Reset()
+        {
+            SetFactionMs = ArriveMs = LetterMs = 0;
+        }
+
+        public static void LogOwnersOnce()
+        {
+            if (ownersLogged)
+                return;
+            ownersLogged = true;
+            Patches info = Harmony.GetPatchInfo(AccessTools.Method(typeof(Pawn), nameof(Pawn.SetFaction)));
+            if (info == null)
+                return;
+            string Owners(IEnumerable<Patch> patches) => string.Join(", ", patches.Select(p => p.owner).Distinct());
+            Log.Message($"[DeferredRaidGeneration] Pawn.SetFaction patches: prefixes [{Owners(info.Prefixes)}], postfixes [{Owners(info.Postfixes)}], "
+                + $"transpilers [{Owners(info.Transpilers)}], finalizers [{Owners(info.Finalizers)}].");
+        }
+    }
+
     [HarmonyPatch(typeof(QuestPart_PawnsArrive), nameof(QuestPart_PawnsArrive.Notify_QuestSignalReceived))]
     public static class Patch_QuestPart_PawnsArrive_Timing
     {
         public static void Prefix(QuestPart_PawnsArrive __instance, Signal signal, out long __state)
         {
-            __state = signal.tag == __instance.inSignal ? Stopwatch.GetTimestamp() : 0;
+            __state = signal.tag == __instance.inSignal && Prefs.DevMode ? Stopwatch.GetTimestamp() : 0;
+            if (__state != 0)
+            {
+                ArrivalBreakdown.Reset();
+                ArrivalBreakdown.Active = true;
+            }
         }
 
         public static Exception Finalizer(Exception __exception, QuestPart_PawnsArrive __instance, long __state)
         {
-            if (Prefs.DevMode && __state != 0)
+            if (__state != 0)
             {
-                double ms = (Stopwatch.GetTimestamp() - __state) * 1000.0 / Stopwatch.Frequency;
-                Log.Message($"[DeferredRaidGeneration] Quest {__instance.quest?.root?.defName}: {__instance.pawns.Count} pawns arrived in {ms:F0} ms.");
+                ArrivalBreakdown.Active = false;
+                double ms = ArrivalBreakdown.Since(__state);
+                double other = ms - ArrivalBreakdown.SetFactionMs - ArrivalBreakdown.ArriveMs - ArrivalBreakdown.LetterMs;
+                Log.Message($"[DeferredRaidGeneration] Quest {__instance.quest?.root?.defName}: {__instance.pawns.Count} pawns arrived in {ms:F0} ms "
+                    + $"(join faction {ArrivalBreakdown.SetFactionMs:F0} ms, arrive {ArrivalBreakdown.ArriveMs:F0} ms, "
+                    + $"letter relations {ArrivalBreakdown.LetterMs:F0} ms, other {other:F0} ms).");
+                if (ArrivalBreakdown.SetFactionMs > 50)
+                    ArrivalBreakdown.LogOwnersOnce();
+            }
+            return __exception;
+        }
+    }
+
+    [HarmonyPatch(typeof(Pawn), nameof(Pawn.SetFaction))]
+    public static class Patch_Pawn_SetFaction_Timing
+    {
+        public static void Prefix(out long __state) => __state = ArrivalBreakdown.Active ? Stopwatch.GetTimestamp() : 0;
+
+        public static Exception Finalizer(Exception __exception, long __state)
+        {
+            if (__state != 0)
+                ArrivalBreakdown.SetFactionMs += ArrivalBreakdown.Since(__state);
+            return __exception;
+        }
+    }
+
+    [HarmonyPatch]
+    public static class Patch_PawnsArrivalModeWorker_Arrive_Timing
+    {
+        public static IEnumerable<MethodBase> TargetMethods()
+        {
+            foreach (Type type in typeof(PawnsArrivalModeWorker).AllSubclassesNonAbstract())
+            {
+                MethodInfo method = type.GetMethod(nameof(PawnsArrivalModeWorker.Arrive),
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
+                if (method != null && !method.IsAbstract)
+                    yield return method;
+            }
+        }
+
+        public static void Prefix(out long __state) => __state = ArrivalBreakdown.Active ? Stopwatch.GetTimestamp() : 0;
+
+        public static Exception Finalizer(Exception __exception, long __state)
+        {
+            if (__state != 0)
+                ArrivalBreakdown.ArriveMs += ArrivalBreakdown.Since(__state);
+            return __exception;
+        }
+    }
+
+    [HarmonyPatch]
+    public static class Patch_PawnRelationUtility_SeenByPlayerLetter_Timing
+    {
+        public static IEnumerable<MethodBase> TargetMethods() =>
+            typeof(PawnRelationUtility).GetMethods(BindingFlags.Static | BindingFlags.Public)
+                .Where(m => m.Name == nameof(PawnRelationUtility.Notify_PawnsSeenByPlayer_Letter));
+
+        public static void Prefix(out long __state) => __state = ArrivalBreakdown.Active ? Stopwatch.GetTimestamp() : 0;
+
+        public static Exception Finalizer(Exception __exception, long __state)
+        {
+            if (__state != 0)
+                ArrivalBreakdown.LetterMs += ArrivalBreakdown.Since(__state);
+            return __exception;
+        }
+    }
+
+    /// <summary>Accepting a quest runs its arrival and everything else listening to the accept signal; logged when slow.</summary>
+    [HarmonyPatch(typeof(Quest), nameof(Quest.Accept))]
+    public static class Patch_Quest_Accept_Timing
+    {
+        public static void Prefix(out long __state) => __state = Prefs.DevMode ? Stopwatch.GetTimestamp() : 0;
+
+        public static Exception Finalizer(Exception __exception, Quest __instance, long __state)
+        {
+            if (__state != 0)
+            {
+                double ms = ArrivalBreakdown.Since(__state);
+                if (ms >= 50)
+                    Log.Message($"[DeferredRaidGeneration] Quest {__instance.root?.defName} accepted in {ms:F0} ms.");
             }
             return __exception;
         }

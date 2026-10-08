@@ -318,4 +318,47 @@ namespace DeferredRaidGeneration
             return false;
         }
     }
+
+    /// <summary>
+    /// A quest group that arrives later (refugees arrive when the quest is accepted) gets the same arrival treatment
+    /// as a replayed group: the died-thoughts shortcut while spawning, and first job searches spread over a few ticks.
+    /// </summary>
+    [HarmonyPatch(typeof(QuestPart_PawnsArrive), nameof(QuestPart_PawnsArrive.Notify_QuestSignalReceived))]
+    public static class Patch_QuestPart_PawnsArrive_Group
+    {
+        [HarmonyPriority(Priority.First)]
+        public static void Prefix(QuestPart_PawnsArrive __instance, Signal signal, out bool __state)
+        {
+            __state = !DeferredRaids.Disabled && DeferredRaids.ReplayPawns == null && signal.tag == __instance.inSignal
+                && __instance.pawns.Count >= DeferredRaids.MinPawnsToDefer;
+            if (!__state)
+                return;
+            DeferredRaids.ReplayPawns = new HashSet<Pawn>(__instance.pawns);
+            DeferredRaids.DiedThoughtHolders = null;
+            DeferredRaids.Staggered.Clear();
+        }
+
+        public static Exception Finalizer(Exception __exception, QuestPart_PawnsArrive __instance, bool __state)
+        {
+            if (!__state)
+                return __exception;
+            try
+            {
+                // Arriving pawns without a lord pick their first job on their first tick, all in the same tick.
+                foreach (Pawn pawn in __instance.pawns)
+                {
+                    if (!DeferredRaids.Staggered.Contains(pawn))
+                        DeferredRaids.Staggered.Add(pawn);
+                }
+                DeferredRaids.StartStaggeredWaits();
+            }
+            finally
+            {
+                DeferredRaids.ReplayPawns = null;
+                DeferredRaids.DiedThoughtHolders = null;
+                DeferredRaids.Staggered.Clear();
+            }
+            return __exception;
+        }
+    }
 }

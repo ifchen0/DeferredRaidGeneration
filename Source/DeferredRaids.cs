@@ -519,7 +519,7 @@ namespace DeferredRaidGeneration
                     + $"{generated.Count(p => p.Spawned && p.Drawer.renderer.renderTree.Resolved)} of {generated.Count(p => p.Spawned)} spawned pawns arrived with graphics built.");
         }
 
-        private static void StartStaggeredWaits()
+        internal static void StartStaggeredWaits()
         {
             foreach (Pawn pawn in Staggered)
             {
