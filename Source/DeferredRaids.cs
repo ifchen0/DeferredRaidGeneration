@@ -247,7 +247,7 @@ namespace DeferredRaidGeneration
         /// <summary>Set while a finished Dynamic Diplomacy arena is being replayed.</summary>
         public static PendingArena ReplayingArena;
 
-        public static bool AnyReplaying => ReplayingRaid != null || ReplayingArena != null;
+        public static bool AnyReplaying => ReplayingRaid != null || ReplayingArena != null || DeferredQuests.Replaying != null;
 
         // The lord sends every pawn to look for its first job in the same tick it is created. During a replay that
         // job search is postponed and spread over the next StaggerTicks ticks with a short wait job instead.
@@ -282,6 +282,7 @@ namespace DeferredRaidGeneration
             registered.Clear();
             ReplayingRaid = null;
             ReplayingArena = null;
+            DeferredQuests.Replaying = null;
             ReplayPawns = null;
             DiedThoughtHolders = null;
             Staggered.Clear();
