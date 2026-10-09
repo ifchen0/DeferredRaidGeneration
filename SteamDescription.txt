@@ -1,6 +1,6 @@
-[b]Warning:[/b] this mod was written with AI coding tools (Claude Code). It changes when and how raid and quest pawns are created: large groups are generated over several seconds, then the vanilla raid or quest code runs a second time with those pawns. Nothing is stored in your save. Mods that change a raid as it starts (for example its faction or size) may lose that effect on deferred raids; mods that act after the raid arrives are not affected. Handled so far: Breaking News' mechanoid advance. Tested in one late-game colony only. If raids, beggar/refugee quests or Dynamic Diplomacy battles behave oddly, disable this mod before reporting the issue to other mod authors.
+[b]Warning:[/b] this mod was written with AI coding tools (Claude Code). It changes when and how raid and quest pawns are created: large groups are generated over several seconds, then the vanilla raid or quest code runs a second time with those pawns. On maps with 100 or more pawns it also runs walking, waiting and downed pawns at a reduced tick rate (can be turned off in the mod settings). Nothing is stored in your save. Mods that change a raid as it starts (for example its faction or size) may lose that effect on deferred raids; mods that act after the raid arrives are not affected. Handled so far: Breaking News' mechanoid advance. Tested in one late-game colony only. If raids, beggar/refugee quests or Dynamic Diplomacy battles behave oddly, disable this mod before reporting the issue to other mod authors.
 
-Removes most of the multi-second freeze when a large raid fires, and the pause when large beggar or refugee groups show up.
+Removes most of the multi-second freeze when a large raid fires, and the pause when large beggar or refugee groups show up. On crowded maps it also lightens the per-tick work of pawns that are only walking, waiting or lying downed.
 
 [h2]Seconds of freeze before the raid letter[/h2]Normally every raider is generated in the same frame the raid fires, so a raid of 100+ pawns freezes the game for several seconds before the letter shows up. In a late-game colony each pawn costs 15-35 ms to generate, and the game also repeats a scan of every container on every map ([i]MapPawns.AllPawnsUnspawned[/i]) dozens of times per pawn.
 
@@ -9,6 +9,10 @@ Removes most of the multi-second freeze when a large raid fires, and the pause w
 [h2]Beggar and refugee groups[/h2]The beggar quest and the refugee quest bring a group sized to your colony (a quarter to three quarters of your colonists, plus their generated relatives), all generated in the frame the quest appears. Refugees also all join your faction and spawn in the frame you accept.
 
 [b]Fix:[/b] Groups of 5 or more are generated the same way as raids: group size, children and their temporary faction are decided first, the pawns are generated over a few seconds, then the vanilla quest is created with them. After you accept, the first refugee joins at once and the others join and walk in one per frame.
+
+[h2]Crowded maps[/h2]On a map with many pawns (a large raid, a Dynamic Diplomacy arena) most of them are only walking, waiting or lying downed, yet each runs its full update every tick.
+
+[b]Fix:[/b] On maps with 100 or more pawns, such pawns run their full update only every 4th tick. In between, movement, ability cooldowns, sounds and visual effects still update, so they move and look as before. Pawns doing any other job keep the normal rate (work progress counts per tick), as do drafted colonists and pawns that attacked or were hurt in the last game hour. The rate and the pawn threshold can be changed, or the feature turned off, in the mod settings.
 
 [h2]Also[/h2][list]
 [*]For all pawn generation, the container scan is done once per map for each pawn or pawn group instead of dozens of times.
@@ -40,6 +44,9 @@ Removes most of the multi-second freeze when a large raid fires, and the pause w
 [h3]Beggar and refugee quests (2026-10-09)[/h3][list]
 [*]Vanilla: groups of 12-30 froze for 0.74-1.07 s when the quest appeared; accepting 43 refugees froze for 0.59 s.
 [*]With this mod: groups of 12-52 generated over 6-24 s (steps 11-31 ms on average), quest appeared with a 0.2-0.35 s pause; accepting 51 refugees took 78 ms, all walked in over 2.6 s.
+[/list]
+[h3]Crowded maps (2026-10-09)[/h3][list]
+[*]Dynamic Diplomacy arenas with 46-90 walking, waiting or downed pawns: their update went from 12-17 to 6.5-10 µs per pawn per tick, saving 0.4-0.6 ms of a 9-14 ms tick (about 4-5%). No visible change in movement or animation.
 [/list]
 [hr][/hr]
 This mod was developed with the help of AI coding tools (Claude Code). Full source code is included in the Source folder and on [url=https://github.com/ifchen0/DeferredRaidGeneration]GitHub[/url] for review.
