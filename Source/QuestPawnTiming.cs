@@ -66,6 +66,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.Diagnostics)]
     [HarmonyPatch(typeof(QuestGen), nameof(QuestGen.Generate))]
     public static class Patch_QuestGen_Generate_Timing
     {
@@ -92,6 +93,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.Diagnostics)]
     [HarmonyPatch(typeof(PawnGenerator), nameof(PawnGenerator.GeneratePawn), typeof(PawnGenerationRequest))]
     public static class Patch_PawnGenerator_GeneratePawn_QuestCount
     {
@@ -133,6 +135,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.Diagnostics)]
     [HarmonyPatch(typeof(QuestPart_PawnsArrive), nameof(QuestPart_PawnsArrive.Notify_QuestSignalReceived))]
     public static class Patch_QuestPart_PawnsArrive_Timing
     {
@@ -163,6 +166,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.Diagnostics)]
     [HarmonyPatch(typeof(Pawn), nameof(Pawn.SetFaction))]
     public static class Patch_Pawn_SetFaction_Timing
     {
@@ -176,6 +180,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.Diagnostics)]
     [HarmonyPatch]
     public static class Patch_PawnsArrivalModeWorker_Arrive_Timing
     {
@@ -200,6 +205,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.Diagnostics)]
     [HarmonyPatch]
     public static class Patch_PawnRelationUtility_SeenByPlayerLetter_Timing
     {
@@ -218,6 +224,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>Accepting a quest runs its arrival and everything else listening to the accept signal; logged when slow.</summary>
+    [HarmonyPatchCategory(Features.Diagnostics)]
     [HarmonyPatch(typeof(Quest), nameof(Quest.Accept))]
     public static class Patch_Quest_Accept_Timing
     {

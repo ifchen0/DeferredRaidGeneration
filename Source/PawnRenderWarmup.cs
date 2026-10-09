@@ -21,6 +21,7 @@ namespace DeferredRaidGeneration
     ///
     /// Zoomed-out atlas baking was measured too (about 0.2 ms per frame baked) and is left to vanilla.
     /// </summary>
+    [HarmonyPatchCategory(Features.RenderWarmup)]
     [HarmonyPatch(typeof(DynamicDrawManager), nameof(DynamicDrawManager.DrawDynamicThings))]
     public static class PawnRenderWarmup
     {
@@ -97,7 +98,7 @@ namespace DeferredRaidGeneration
         public static bool Warm(Pawn pawn)
         {
             PawnRenderer renderer = pawn.Drawer?.renderer;
-            if (WarmupDisabled || renderer == null || renderer.renderTree.Resolved || failed.Contains(pawn))
+            if (!Features.RenderWarmupActive || WarmupDisabled || renderer == null || renderer.renderTree.Resolved || failed.Contains(pawn))
                 return false;
             InWarmup = true;
             try
@@ -159,6 +160,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>Development-mode timing of render trees built while drawing.</summary>
+    [HarmonyPatchCategory(Features.RenderWarmup)]
     [HarmonyPatch(typeof(PawnRenderer), nameof(PawnRenderer.EnsureGraphicsInitialized))]
     public static class Patch_EnsureGraphicsInitialized
     {
@@ -177,6 +179,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>Development-mode timing of atlas frames rendered while drawing.</summary>
+    [HarmonyPatchCategory(Features.RenderWarmup)]
     [HarmonyPatch(typeof(PawnRenderer), "GetBlitMeshUpdatedFrame")]
     public static class Patch_GetBlitMeshUpdatedFrame
     {

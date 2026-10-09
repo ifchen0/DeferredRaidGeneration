@@ -20,9 +20,9 @@ namespace DeferredRaidGeneration
         static Startup()
         {
             var harmony = new Harmony("ifchen0.deferredraidgeneration");
-            harmony.PatchAll();
-            DynamicDiplomacyPatch.TryPatch(harmony);
-            ApparelPairsCache.TryPatch(harmony);
+            // Only the flush before saving is always applied; everything else belongs to a feature that can be switched off.
+            harmony.PatchAllUncategorized();
+            Features.Apply(harmony, DeferredRaidGenerationMod.Settings);
             BreakingNewsCompat.Init();
         }
     }
@@ -560,6 +560,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.RaidDeferral)]
     [HarmonyPatch(typeof(IncidentWorker), nameof(IncidentWorker.TryExecute))]
     public static class Patch_IncidentWorker_TryExecute
     {
@@ -584,6 +585,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>During a replay, hands the pre-generated pawns to the group worker instead of generating new ones.</summary>
+    [HarmonyPatchCategory(Features.RaidDeferral)]
     [HarmonyPatch(typeof(PawnGroupKindWorker_Normal), "GeneratePawns",
         typeof(PawnGroupMakerParms), typeof(PawnGroupMaker), typeof(List<Pawn>), typeof(bool))]
     public static class Patch_PawnGroupKindWorker_Normal_GeneratePawns
@@ -614,6 +616,7 @@ namespace DeferredRaidGeneration
     /// RaidEnemy re-rolls the child-raid restriction every time it runs; the replay must keep the one decided when the
     /// raid was planned, since the pawns were generated for it.
     /// </summary>
+    [HarmonyPatchCategory(Features.RaidDeferral)]
     [HarmonyPatch(typeof(IncidentWorker_RaidEnemy), nameof(IncidentWorker_RaidEnemy.ResolveRaidAgeRestriction))]
     public static class Patch_IncidentWorker_RaidEnemy_ResolveRaidAgeRestriction
     {
@@ -624,6 +627,7 @@ namespace DeferredRaidGeneration
     /// When the replayed group's lord interrupts a pawn's job to apply its duty, end the job without immediately
     /// searching for a new one; StartStaggeredWaits then gives the pawn a short wait so the searches are spread out.
     /// </summary>
+    [HarmonyPatchCategory(Features.ArrivalSmoothing)]
     [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.EndCurrentJob))]
     public static class Patch_Pawn_JobTracker_EndCurrentJob
     {
@@ -697,6 +701,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.ContainerCache)]
     [HarmonyPatch(typeof(PawnGenerator), nameof(PawnGenerator.GeneratePawn), typeof(PawnGenerationRequest))]
     public static class Patch_PawnGenerator_GeneratePawn_Scope
     {
@@ -713,6 +718,7 @@ namespace DeferredRaidGeneration
     /// Keeps the cache across all pawns of one group (raid, caravan, quest group), not just within one pawn. In
     /// development mode, slow groups that were generated immediately (not deferred) are logged.
     /// </summary>
+    [HarmonyPatchCategory(Features.ContainerCache)]
     [HarmonyPatch(typeof(PawnGroupKindWorker), nameof(PawnGroupKindWorker.GeneratePawns),
         typeof(PawnGroupMakerParms), typeof(PawnGroupMaker), typeof(bool))]
     public static class Patch_PawnGroupKindWorker_GeneratePawns_Scope
@@ -738,6 +744,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.ContainerCache)]
     [HarmonyPatch(typeof(MapPawns), nameof(MapPawns.AllPawnsUnspawned), MethodType.Getter)]
     public static class Patch_MapPawns_AllPawnsUnspawned
     {
@@ -808,6 +815,7 @@ namespace DeferredRaidGeneration
     /// memories that mention any of its pawns are found once; each pawn then only checks those holders. The removal
     /// itself is vanilla.
     /// </summary>
+    [HarmonyPatchCategory(Features.ArrivalSmoothing)]
     [HarmonyPatch(typeof(PawnDiedOrDownedThoughtsUtility), nameof(PawnDiedOrDownedThoughtsUtility.RemoveDiedThoughts))]
     public static class Patch_PawnDiedOrDownedThoughtsUtility_RemoveDiedThoughts
     {
@@ -980,6 +988,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.StealCache)]
     [HarmonyPatch(typeof(StealAIUtility), nameof(StealAIUtility.TotalMarketValueAround))]
     public static class Patch_StealAIUtility_TotalMarketValueAround_Scope
     {
@@ -993,6 +1002,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>The periodic search for raiders still fighting; same condition as the vanilla loop.</summary>
+    [HarmonyPatchCategory(Features.StealCache)]
     [HarmonyPatch(typeof(LordToil_DoOpportunisticTaskOrCover), nameof(LordToil_DoOpportunisticTaskOrCover.LordToilTick))]
     public static class Patch_LordToil_DoOpportunisticTaskOrCover_LordToilTick_Scope
     {
@@ -1011,6 +1021,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.StealCache)]
     [HarmonyPatch(typeof(LordToil_DoOpportunisticTaskOrCover), nameof(LordToil_DoOpportunisticTaskOrCover.UpdateAllDuties))]
     public static class Patch_LordToil_DoOpportunisticTaskOrCover_UpdateAllDuties_Scope
     {
@@ -1029,6 +1040,7 @@ namespace DeferredRaidGeneration
         }
     }
 
+    [HarmonyPatchCategory(Features.StealCache)]
     [HarmonyPatch(typeof(StealAIUtility), nameof(StealAIUtility.GetValue))]
     public static class Patch_StealAIUtility_GetValue
     {
@@ -1103,6 +1115,7 @@ namespace DeferredRaidGeneration
     /// firing, so the autosave happens on the first tick after generation finishes. A hold longer than
     /// MaxHoldSeconds of real time lets the autosave through (it then finishes the groups as a manual save does).
     /// </summary>
+    [HarmonyPatchCategory(Features.AutosaveHold)]
     [HarmonyPatch(typeof(Autosaver), nameof(Autosaver.AutosaverTick))]
     public static class Patch_Autosaver_AutosaverTick
     {

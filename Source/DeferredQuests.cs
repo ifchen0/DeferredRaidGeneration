@@ -116,7 +116,7 @@ namespace DeferredRaidGeneration
         public static bool TryDefer(QuestScriptDef def, Map map, int population, Action run)
         {
             DeferredRaids component = DeferredRaids.Instance;
-            if (component == null || DeferredRaids.Disabled || DeferredRaids.AnyReplaying || !Supported(def) || map == null)
+            if (component == null || !Features.QuestDeferralActive || DeferredRaids.Disabled || DeferredRaids.AnyReplaying || !Supported(def) || map == null)
                 return false;
 
             var slate = new Slate();
@@ -221,6 +221,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>Storyteller quests (GiveQuest_Beggars, random quests) are deferred here and replayed through the same call.</summary>
+    [HarmonyPatchCategory(Features.QuestDeferral)]
     [HarmonyPatch(typeof(IncidentWorker_GiveQuest), "GiveQuest")]
     public static class Patch_IncidentWorker_GiveQuest_GiveQuest
     {
@@ -244,6 +245,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>During a replay the root gets the planned lodger count, and the planned seed for its child roll.</summary>
+    [HarmonyPatchCategory(Features.QuestDeferral)]
     [HarmonyPatch(typeof(QuestNode_Root_Beggars), nameof(QuestNode_Root_Beggars.LodgerCountFromPopulation))]
     public static class Patch_QuestNode_Root_Beggars_LodgerCountFromPopulation
     {
@@ -263,6 +265,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>During a replay the root gets the faction created when the quest was planned.</summary>
+    [HarmonyPatchCategory(Features.QuestDeferral)]
     [HarmonyPatch(typeof(FactionGenerator), nameof(FactionGenerator.NewGeneratedFactionWithRelations),
         typeof(PlanetLayer), typeof(FactionGeneratorParms), typeof(List<FactionRelation>))]
     public static class Patch_FactionGenerator_NewGeneratedFactionWithRelations
@@ -279,6 +282,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>During a replay the quest goes to the map it was planned for.</summary>
+    [HarmonyPatchCategory(Features.QuestDeferral)]
     [HarmonyPatch(typeof(QuestGen_Get), nameof(QuestGen_Get.GetMap))]
     public static class Patch_QuestGen_Get_GetMap
     {
@@ -293,6 +297,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>During a replay the root's pawn requests take the matching pre-generated pawns.</summary>
+    [HarmonyPatchCategory(Features.QuestDeferral)]
     [HarmonyPatch(typeof(PawnGenerator), nameof(PawnGenerator.GeneratePawn), typeof(PawnGenerationRequest))]
     public static class Patch_PawnGenerator_GeneratePawn_QuestReplay
     {
@@ -359,6 +364,8 @@ namespace DeferredRaidGeneration
         /// <summary>Called from QuestPart_PawnsArrive.Notify_QuestSignalReceived for a group joining the player.</summary>
         public static void Begin(QuestPart_PawnsArrive part)
         {
+            if (!Features.StaggeredJoinActive)
+                return;
             PawnsArrivalModeDef mode = part.arrivalMode ?? PawnsArrivalModeDefOf.EdgeWalkIn;
             if (!part.joinPlayer || mode.Worker.GetType() != typeof(PawnsArrivalModeWorker_EdgeWalkIn))
                 return;
@@ -474,6 +481,7 @@ namespace DeferredRaidGeneration
     /// as a replayed group: the died-thoughts shortcut while spawning, and first job searches spread over a few ticks.
     /// A group joining the player also arrives one pawn per frame (StaggeredArrivals).
     /// </summary>
+    [HarmonyPatchCategory(Features.ArrivalSmoothing)]
     [HarmonyPatch(typeof(QuestPart_PawnsArrive), nameof(QuestPart_PawnsArrive.Notify_QuestSignalReceived))]
     public static class Patch_QuestPart_PawnsArrive_Group
     {
@@ -517,6 +525,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>Holds back joining the player for the pawns of a staggered arrival other than the first.</summary>
+    [HarmonyPatchCategory(Features.StaggeredJoin)]
     [HarmonyPatch(typeof(Pawn), nameof(Pawn.SetFaction))]
     public static class Patch_Pawn_SetFaction_StaggeredArrival
     {
@@ -532,6 +541,7 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>Spawns only the first pawn of a staggered arrival and remembers where the others walk in.</summary>
+    [HarmonyPatchCategory(Features.StaggeredJoin)]
     [HarmonyPatch(typeof(PawnsArrivalModeWorker_EdgeWalkIn), nameof(PawnsArrivalModeWorker_EdgeWalkIn.Arrive))]
     public static class Patch_PawnsArrivalModeWorker_EdgeWalkIn_Arrive
     {
