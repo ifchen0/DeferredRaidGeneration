@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using HarmonyLib;
@@ -22,6 +23,8 @@ namespace DeferredRaidGeneration
             Scribe_Values.Look(ref throttleInterval, "throttleInterval", 4);
             Scribe_Values.Look(ref throttleMinMapPawns, "throttleMinMapPawns", 100);
             Scribe_Values.Look(ref throttleWarWork, "throttleWarWork", false);
+            throttleInterval = Mathf.Clamp(throttleInterval, 2, 8);
+            throttleMinMapPawns = Mathf.Clamp(throttleMinMapPawns, 0, 300);
         }
     }
 
@@ -60,16 +63,23 @@ namespace DeferredRaidGeneration
         }
     }
 
+    public enum ThrottleKind { None, Idle, Work }
+
     /// <summary>
     /// On a crowded map (a large battle, an arena) most pawns are only walking or waiting, and many others lie downed.
     /// Their Pawn.Tick (job driver, stances, verbs, hediff and comp ticks) runs every tick although nothing they do needs it;
-    /// the slower-rate TickInterval part is already scaled by the game itself. For such pawns the full Tick runs only on
-    /// every Nth tick (aligned with the pawn's hash offset, so the game's own hash-interval checks inside it still fire,
-    /// at a multiple of their interval); the ticks in between run only movement, toil countdown, the toil's pre-tick
-    /// actions (work sounds, effects and progress bars, which must be maintained every tick), ability cooldowns, sounds
-    /// and effecters. Pawns doing anything else keep the full rate, since their job progress is counted per tick.
+    /// the slower-rate TickInterval part is already scaled by the game itself. For such pawns the full Tick runs on one
+    /// tick in N, at a scattered position (IsFullTick), so any periodic check inside Tick, hash-aligned or a plain
+    /// TicksGame modulo in a mod, still fires about 1/N as often instead of never for some pawns.
+    /// The ticks in between run what must keep its own pace or would visibly stutter: movement, TickRare on its usual
+    /// schedule, ability cooldowns, the toil's end/fail checks and pre-tick actions (work sounds, effects, progress
+    /// bars), the job mote, sounds and effecters. Pawns doing anything else keep the full rate, since their job progress
+    /// is counted per tick. Hediff ticks are left to the full tick: vanilla Hediff.Tick is empty (injuries, bleeding and
+    /// diseases advance in TickInterval), and running it on every skipped tick cost about half of what throttling saves;
+    /// per-tick hediff logic added by mods runs at the reduced rate while a pawn is throttled.
     /// Optionally, while any map has an active threat to the player, colony pawns doing work-giver jobs that are not part
     /// of the fight are throttled too; their work progresses more slowly, which the player accepts for the duration.
+    /// Their toil countdown is not compensated, so timed toils slow down by the same factor as per-tick work.
     /// A pawn that starts an attack or takes damage counts as engaged for EngagedTicks (unless downed); drafted colonists
     /// are never throttled. Engagement is not saved; after loading, pawns become engaged again on their next attack or hit.
     /// </summary>
@@ -78,13 +88,24 @@ namespace DeferredRaidGeneration
         private const int EngagedTicks = GenDate.TicksPerHour;
         private static readonly Dictionary<int, int> engagedUntil = new Dictionary<int, int>();
         private static Game engagedGame;
+        private const int PruneInterval = GenDate.TicksPerDay;
+        private static int prunedTick;
+        private static readonly List<int> expired = new List<int>();
 
         private static readonly AccessTools.FieldRef<Pawn, Sustainer> sustainerAmbient =
             AccessTools.FieldRefAccess<Pawn, Sustainer>("sustainerAmbient");
         private static readonly AccessTools.FieldRef<Pawn, Sustainer> sustainerMoving =
             AccessTools.FieldRefAccess<Pawn, Sustainer>("sustainerMoving");
-        private static readonly System.Func<JobDriver, Toil> curToil =
-            AccessTools.MethodDelegate<System.Func<JobDriver, Toil>>(AccessTools.PropertyGetter(typeof(JobDriver), "CurToil"));
+        private static readonly Func<JobDriver, Toil> curToil =
+            AccessTools.MethodDelegate<Func<JobDriver, Toil>>(AccessTools.PropertyGetter(typeof(JobDriver), "CurToil"));
+        private static readonly Func<JobDriver, bool> checkCurrentToilEndOrFail =
+            AccessTools.MethodDelegate<Func<JobDriver, bool>>(AccessTools.Method(typeof(JobDriver), "CheckCurrentToilEndOrFail"));
+        private static readonly AccessTools.FieldRef<JobDriver, bool> wantBeginNextToil =
+            AccessTools.FieldRefAccess<JobDriver, bool>("wantBeginNextToil");
+        private static readonly AccessTools.FieldRef<Pawn_JobTracker, int> jobsGivenThisTick =
+            AccessTools.FieldRefAccess<Pawn_JobTracker, int>("jobsGivenThisTick");
+        private static readonly AccessTools.FieldRef<Pawn_JobTracker, string> jobsGivenThisTickTextual =
+            AccessTools.FieldRefAccess<Pawn_JobTracker, string>("jobsGivenThisTickTextual");
 
         private static HashSet<JobDef> simpleJobs;
 
@@ -93,13 +114,13 @@ namespace DeferredRaidGeneration
         private static bool anyThreat;
         private static WorkGiverDef rearmTurrets;
 
-        // Dev-mode timing: pawn-ticks of qualifying pawns and the time their Pawn.Tick took, plus the whole game tick.
+        // Dev-mode timing: pawn-ticks of qualifying pawns and the time their Pawn.Tick took, by kind and by full or
+        // skipped tick, plus the whole game tick.
         private const int ReportInterval = 600;
         private static int reportTicks;
         private static long gameTickTime;
-        private static int qualifyingPawnTicks;
-        private static int skippedPawnTicks;
-        private static long qualifyingTime;
+        private static readonly int[,] pawnTicks = new int[3, 2];
+        private static readonly long[,] pawnTime = new long[3, 2];
 
         private static Game EnsureGame()
         {
@@ -109,6 +130,19 @@ namespace DeferredRaidGeneration
                 engagedUntil.Clear();
                 engagedGame = game;
                 threatCheckedTick = -ThreatCheckInterval;
+                prunedTick = 0;
+            }
+            int now = Find.TickManager.TicksGame;
+            if (now - prunedTick >= PruneInterval || now < prunedTick)
+            {
+                // Pawns that died or left keep their entry; drop every expired one now and then.
+                prunedTick = now;
+                foreach (KeyValuePair<int, int> pair in engagedUntil)
+                    if (pair.Value <= now)
+                        expired.Add(pair.Key);
+                foreach (int id in expired)
+                    engagedUntil.Remove(id);
+                expired.Clear();
             }
             return game;
         }
@@ -121,32 +155,34 @@ namespace DeferredRaidGeneration
             engagedUntil[pawn.thingIDNumber] = Find.TickManager.TicksGame + EngagedTicks;
         }
 
-        /// <summary>True when this pawn's Pawn.Tick may run at the reduced rate.</summary>
-        public static bool Qualifies(Pawn pawn)
+        /// <summary>Whether this pawn's Pawn.Tick may run at the reduced rate, and why.</summary>
+        public static ThrottleKind Qualifies(Pawn pawn)
         {
             if (!pawn.Spawned || pawn.Map.mapPawns.AllPawnsSpawnedCount < DeferredRaidGenerationMod.Settings.throttleMinMapPawns)
-                return false;
+                return ThrottleKind.None;
             if (pawn.Downed)
-                return true;
+                return ThrottleKind.Idle;
             if (pawn.Drafted)
-                return false;
+                return ThrottleKind.None;
             EnsureGame();
             if (engagedUntil.TryGetValue(pawn.thingIDNumber, out int until))
             {
                 if (Find.TickManager.TicksGame < until)
-                    return false;
+                    return ThrottleKind.None;
                 engagedUntil.Remove(pawn.thingIDNumber);
             }
             Job job = pawn.CurJob;
             if (job == null)
-                return true;
+                return ThrottleKind.Idle;
             if (simpleJobs == null)
                 simpleJobs = new HashSet<JobDef>
                 {
                     JobDefOf.Goto, JobDefOf.GotoWander, JobDefOf.Wait, JobDefOf.Wait_Wander,
                     JobDefOf.Wait_MaintainPosture, JobDefOf.Wait_Combat,
                 };
-            return simpleJobs.Contains(job.def) || IsThrottledWarWork(pawn, job);
+            if (simpleJobs.Contains(job.def))
+                return ThrottleKind.Idle;
+            return IsThrottledWarWork(pawn, job) ? ThrottleKind.Work : ThrottleKind.None;
         }
 
         /// <summary>Colony work that is not part of the fight, while any map has an active threat.</summary>
@@ -176,34 +212,52 @@ namespace DeferredRaidGeneration
             return anyThreat;
         }
 
-        /// <summary>What still runs on a skipped tick: everything a viewer would see stutter without.</summary>
-        public static void LightTick(Pawn pawn)
+        /// <summary>
+        /// One tick in each block of <paramref name="interval"/> ticks runs the full Pawn.Tick; which one is hashed from
+        /// the block number and the pawn, so it has no period that a check inside Tick could line up against (a fixed or
+        /// steadily moving position starves checks such as TicksGame % 60 for some pawns). Gaps average the interval and
+        /// are at most twice it minus one.
+        /// </summary>
+        public static bool IsFullTick(Pawn pawn, int interval)
+        {
+            int now = Find.TickManager.TicksGame;
+            int block = now / interval;
+            uint x = unchecked((uint)block * 0x9E3779B1u ^ (uint)pawn.HashOffset());
+            x ^= x >> 16;
+            x = unchecked(x * 0x85EBCA6Bu);
+            x ^= x >> 13;
+            x = unchecked(x * 0xC2B2AE35u);
+            x ^= x >> 16;
+            return now - block * interval == (int)(x % (uint)interval);
+        }
+
+        /// <summary>
+        /// What still runs on a skipped tick: everything a viewer would see stutter without, plus the parts that must keep
+        /// their own pace. Work pawns get no toil countdown, so their timed toils slow down like their per-tick work.
+        /// </summary>
+        public static void LightTick(Pawn pawn, ThrottleKind kind)
         {
             if (pawn.stances.FullBodyBusy)
                 pawn.stances.StanceTrackerTick();
             pawn.pather.PatherTick();
             if (!pawn.Spawned)
                 return;
+            if (pawn.IsHashIntervalTick(250))
+                pawn.TickRare();
             pawn.abilities?.AbilitiesTick();
-            JobDriver driver = pawn.jobs?.curDriver;
-            if (driver != null)
+            if (!pawn.Spawned)
+                return;
+            Pawn_JobTracker jobs = pawn.jobs;
+            if (jobs != null)
             {
-                driver.ticksLeftThisToil--;
-                driver.debugTicksSpentThisToil++;
-                // Same guard as JobDriver.DriverTick: stop once an action changes the job or the toil.
-                Toil toil = curToil(driver);
-                List<System.Action> actions = toil?.preTickActions;
-                if (actions != null)
-                {
-                    Job job = pawn.CurJob;
-                    for (int i = 0; i < actions.Count; i++)
-                    {
-                        actions[i]();
-                        if (pawn.CurJob != job || pawn.jobs.curDriver != driver || curToil(driver) != toil)
-                            break;
-                    }
-                }
+                // JobTrackerTick resets the per-tick job count; without it, jobs started on skipped ticks add up.
+                jobsGivenThisTick(jobs) = 0;
+                jobsGivenThisTickTextual(jobs) = "";
+                if (jobs.curDriver != null)
+                    ToilTick(pawn, jobs.curDriver, kind == ThrottleKind.Idle);
             }
+            if (!pawn.Spawned)
+                return;
             Sustainer ambient = sustainerAmbient(pawn);
             if (ambient != null && !ambient.Ended)
                 ambient.Maintain();
@@ -213,12 +267,48 @@ namespace DeferredRaidGeneration
             pawn.Drawer.renderer.EffectersTick(false);
         }
 
-        public static void RecordPawnTick(long elapsed, bool skipped)
+        /// <summary>JobDriver.DriverTick without the toil's tickAction, which is the per-tick work being slowed.</summary>
+        private static void ToilTick(Pawn pawn, JobDriver driver, bool countDown)
         {
-            qualifyingPawnTicks++;
-            qualifyingTime += elapsed;
-            if (skipped)
-                skippedPawnTicks++;
+            try
+            {
+                if (countDown)
+                {
+                    driver.ticksLeftThisToil--;
+                    driver.debugTicksSpentThisToil++;
+                }
+                Toil toil = curToil(driver);
+                if (toil == null || wantBeginNextToil(driver))
+                    return;
+                if (toil.defaultCompleteMode == ToilCompleteMode.Delay && driver.ticksLeftThisToil <= 0)
+                    return;
+                Job job = pawn.CurJob;
+                List<Action> actions = toil.preTickActions;
+                if (actions != null)
+                {
+                    // The full tick checks end and fail conditions first, and pre-tick actions may rely on them.
+                    if (checkCurrentToilEndOrFail(driver))
+                        return;
+                    // Same guard as DriverTick: stop once an action changes the job or the toil.
+                    for (int i = 0; i < actions.Count; i++)
+                    {
+                        actions[i]();
+                        if (pawn.CurJob != job || pawn.jobs.curDriver != driver || curToil(driver) != toil)
+                            return;
+                    }
+                }
+                job?.mote?.Maintain();
+            }
+            catch (Exception e)
+            {
+                JobUtility.TryStartErrorRecoverJob(pawn, "Exception in reduced-rate JobDriver tick for pawn " + pawn.ToStringSafe(), e, driver);
+            }
+        }
+
+        public static void RecordPawnTick(ThrottleKind kind, long elapsed, bool skipped)
+        {
+            pawnTicks[(int)kind, skipped ? 1 : 0]++;
+            pawnTime[(int)kind, skipped ? 1 : 0] += elapsed;
         }
 
         public static void RecordGameTick(long elapsed)
@@ -226,53 +316,68 @@ namespace DeferredRaidGeneration
             gameTickTime += elapsed;
             if (++reportTicks < ReportInterval)
                 return;
-            if (qualifyingPawnTicks > 0)
+            long total = 0;
+            foreach (long time in pawnTime)
+                total += time;
+            if (total > 0)
             {
                 double ms = 1000.0 / Stopwatch.Frequency;
                 var settings = DeferredRaidGenerationMod.Settings;
-                Log.Message($"[DRG] Battle throttle {(settings.throttlePawns ? $"on (1/{settings.throttleInterval})" : "off")}: " +
-                    $"{(double)qualifyingPawnTicks / reportTicks:F1} qualifying pawns, " +
-                    $"their Pawn.Tick {qualifyingTime * ms / reportTicks:F3} ms/tick " +
-                    $"({qualifyingTime * ms * 1000 / qualifyingPawnTicks:F1} us/pawn, {100.0 * skippedPawnTicks / qualifyingPawnTicks:F0}% skipped); " +
-                    $"whole tick {gameTickTime * ms / reportTicks:F2} ms");
+                var sb = new System.Text.StringBuilder($"[DRG] Battle throttle {(settings.throttlePawns ? $"on (1/{settings.throttleInterval})" : "off")}:");
+                foreach (ThrottleKind kind in new[] { ThrottleKind.Idle, ThrottleKind.Work })
+                {
+                    int k = (int)kind, full = pawnTicks[k, 0], skipped = pawnTicks[k, 1];
+                    if (full + skipped == 0)
+                        continue;
+                    sb.Append($" {kind.ToString().ToLower()} {(double)(full + skipped) / reportTicks:F1} pawns, " +
+                              $"full tick {(full > 0 ? pawnTime[k, 0] * ms * 1000 / full : 0):F1} us, " +
+                              $"skipped tick {(skipped > 0 ? pawnTime[k, 1] * ms * 1000 / skipped : 0):F1} us;");
+                }
+                sb.Append($" their Pawn.Tick {total * ms / reportTicks:F3} ms/tick; whole tick {gameTickTime * ms / reportTicks:F2} ms");
+                Log.Message(sb.ToString());
             }
             reportTicks = 0;
             gameTickTime = 0;
-            qualifyingPawnTicks = 0;
-            skippedPawnTicks = 0;
-            qualifyingTime = 0;
+            System.Array.Clear(pawnTicks, 0, pawnTicks.Length);
+            System.Array.Clear(pawnTime, 0, pawnTime.Length);
         }
     }
 
     [HarmonyPatch(typeof(Pawn), "Tick")]
     public static class Patch_Pawn_Tick_BattleThrottle
     {
-        public static bool Prefix(Pawn __instance, out long __state)
+        public struct Timing
         {
-            __state = 0;
+            public long start;
+            public ThrottleKind kind;
+        }
+
+        public static bool Prefix(Pawn __instance, out Timing __state)
+        {
+            __state = default;
             var settings = DeferredRaidGenerationMod.Settings;
             bool measure = Prefs.DevMode;
             if (!settings.throttlePawns && !measure)
                 return true;
-            if (!BattleThrottle.Qualifies(__instance))
+            ThrottleKind kind = BattleThrottle.Qualifies(__instance);
+            if (kind == ThrottleKind.None)
                 return true;
-            long start = Stopwatch.GetTimestamp();
-            if (!settings.throttlePawns || __instance.IsHashIntervalTick(settings.throttleInterval))
+            long start = measure ? Stopwatch.GetTimestamp() : 0;
+            if (!settings.throttlePawns || BattleThrottle.IsFullTick(__instance, settings.throttleInterval))
             {
-                if (measure)
-                    __state = start;
+                __state = new Timing { start = start, kind = kind };
                 return true;
             }
-            BattleThrottle.LightTick(__instance);
+            BattleThrottle.LightTick(__instance, kind);
             if (measure)
-                BattleThrottle.RecordPawnTick(Stopwatch.GetTimestamp() - start, skipped: true);
+                BattleThrottle.RecordPawnTick(kind, Stopwatch.GetTimestamp() - start, skipped: true);
             return false;
         }
 
-        public static void Postfix(long __state)
+        public static void Postfix(Timing __state)
         {
-            if (__state != 0)
-                BattleThrottle.RecordPawnTick(Stopwatch.GetTimestamp() - __state, skipped: false);
+            if (__state.start != 0)
+                BattleThrottle.RecordPawnTick(__state.kind, Stopwatch.GetTimestamp() - __state.start, skipped: false);
         }
     }
 
