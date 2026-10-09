@@ -5,9 +5,9 @@
   <packageId>ifchen0.deferredraidgeneration</packageId>
   <url>https://github.com/ifchen0/DeferredRaidGeneration</url>
   <supportedVersions><li>1.6</li></supportedVersions>
-  <description>Warning: this mod was written with AI coding tools (Claude Code). It changes when and how raid and quest pawns are created: large groups are generated over several seconds, then the vanilla raid or quest code runs a second time with those pawns. On maps with 100 or more pawns it also runs walking, waiting and downed pawns at a reduced tick rate (can be turned off in the mod settings). Nothing is stored in your save. Mods that change a raid as it starts (for example its faction or size) may lose that effect on deferred raids; mods that act after the raid arrives are not affected. Handled so far: Breaking News' mechanoid advance. Tested in one late-game colony only. If raids, beggar/refugee quests or Dynamic Diplomacy battles behave oddly, disable this mod before reporting the issue to other mod authors.
+  <description>Warning: this mod was written with AI coding tools (Claude Code). It changes when and how raid and quest pawns are created: large groups are generated over several seconds, then the vanilla raid or quest code runs a second time with those pawns. An optional setting (off by default) runs walking, waiting and downed pawns at a reduced tick rate on crowded maps. Nothing is stored in your save. Mods that change a raid as it starts (for example its faction or size) may lose that effect on deferred raids; mods that act after the raid arrives are not affected. Handled so far: Breaking News' mechanoid advance. Tested in one late-game colony only. If raids, beggar/refugee quests or Dynamic Diplomacy battles behave oddly, disable this mod before reporting the issue to other mod authors.
 
-Removes most of the multi-second freeze when a large raid fires, and the pause when large beggar or refugee groups show up. On crowded maps it also lightens the per-tick work of pawns that are only walking, waiting or lying downed.
+Removes most of the multi-second freeze when a large raid fires, and the pause when large beggar or refugee groups show up. Optionally, it also lightens the per-tick work of idle pawns on crowded maps.
 
 Seconds of freeze before the raid letter
 Normally every raider is generated in the same frame the raid fires, so a raid of 100+ pawns freezes the game for several seconds before the letter shows up. In a late-game colony each pawn costs 15-35 ms to generate, and the game also repeats a scan of every container on every map (MapPawns.AllPawnsUnspawned) dozens of times per pawn.
@@ -22,9 +22,9 @@ Fix: Groups of 5 or more are generated the same way as raids: group size, childr
 Crowded maps
 On a map with many pawns (a large raid, a Dynamic Diplomacy arena) most of them are only walking, waiting or lying downed, yet each runs its full update every tick.
 
-Fix: On maps with 100 or more pawns, such pawns run their full update only every 4th tick. In between, movement, ability cooldowns, sounds and visual effects still update, so they move and look as before. Pawns doing any other job keep the normal rate (work progress counts per tick), as do drafted colonists and pawns that attacked or were hurt in the last game hour. The rate and the pawn threshold can be changed, or the feature turned off, in the mod settings.
+Fix (optional, off by default): On maps with 100 or more pawns, such pawns run their full update only every 4th tick. In between, movement, ability cooldowns, sounds and visual effects still update, so they move and look as before. Pawns doing any other job keep the normal rate (work progress counts per tick), as do drafted colonists and pawns that attacked or were hurt in the last game hour. Turn it on, and change the rate or the pawn threshold, in the mod settings.
 
-Optional, off by default: while any of your maps has an active threat, colony work that is not part of the fight (cooking, crafting, research, growing, hauling, cleaning) runs at the reduced rate too, so it progresses more slowly until the fight is over. Doctor, firefighting, construction and repair work, turret rearming, and jobs ordered by hand are not affected.
+Also optional: while any of your maps has an active threat, colony work that is not part of the fight (cooking, crafting, research, growing, hauling, cleaning) runs at the reduced rate too, so it progresses more slowly until the fight is over. Doctor, firefighting, construction and repair work, turret rearming, and jobs ordered by hand are not affected.
 
 Also
 

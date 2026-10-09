@@ -12,14 +12,14 @@ namespace DeferredRaidGeneration
 {
     public class DeferredRaidGenerationSettings : ModSettings
     {
-        public bool throttlePawns = true;
+        public bool throttlePawns;
         public int throttleInterval = 4;
         public int throttleMinMapPawns = 100;
         public bool throttleWarWork;
 
         public override void ExposeData()
         {
-            Scribe_Values.Look(ref throttlePawns, "throttlePawns", true);
+            Scribe_Values.Look(ref throttlePawns, "throttlePawns", false);
             Scribe_Values.Look(ref throttleInterval, "throttleInterval", 4);
             Scribe_Values.Look(ref throttleMinMapPawns, "throttleMinMapPawns", 100);
             Scribe_Values.Look(ref throttleWarWork, "throttleWarWork", false);
