@@ -57,6 +57,27 @@ namespace DeferredRaidGeneration
     }
 
     /// <summary>
+    /// World Domination 2.0 fights caravan interceptions and camp clashes on a temporary map with its own tracker
+    /// component. The raid sent there is exempted from WD's storyteller raid gate only by a flag that is set while the
+    /// incident runs, and the tracker declares victory once no enemy is on the map some ticks after the fight started.
+    /// A deferred replay would miss the flag and could arrive after that check, so these maps are left to vanilla.
+    /// </summary>
+    public static class WorldDominationCompat
+    {
+        private const string ClashTrackerName = "TSA_WorldDomination.WD_MapComponent_CaravanClash";
+
+        /// <summary>True when the map is a World Domination clash encounter map.</summary>
+        public static bool IsClashMap(Map map)
+        {
+            List<MapComponent> components = map.components;
+            for (int i = 0; i < components.Count; i++)
+                if (components[i].GetType().FullName == ClashTrackerName)
+                    return true;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// A group of pawns that is generated one at a time over several seconds, then handed to the code that would
     /// normally have generated them all at once.
     /// </summary>
@@ -306,6 +327,8 @@ namespace DeferredRaidGeneration
                 || parms.pawnGroups != null || parms.controllerPawn != null)
                 return false;
             if (worker.def.requireColonistsPresent && map.mapPawns.FreeColonistsSpawnedCount == 0)
+                return false;
+            if (WorldDominationCompat.IsClashMap(map))
                 return false;
             if (BreakingNewsCompat.WantsRaidFaction(worker, parms))
             {
