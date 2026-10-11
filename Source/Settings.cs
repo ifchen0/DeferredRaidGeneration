@@ -56,7 +56,7 @@ namespace DeferredRaidGeneration
         {
             new Feature(RaidDeferral, "Generate large raids over several seconds",
                 "Enemy and friendly raids of 5 or more pawns (and Dynamic Diplomacy conquest armies) are generated one pawn at a time, " +
-                "then the vanilla raid runs with those pawns. The raid arrives up to about 20 s later.")
+                "then the vanilla raid runs with those pawns. The raid arrives up to the maximum preparation time below later.")
             {
                 ApplyManual = DynamicDiplomacyPatch.TryPatch,
             },
@@ -133,8 +133,20 @@ namespace DeferredRaidGeneration
 
     public class DeferredRaidGenerationSettings : ModSettings
     {
+        public const int DefaultMaxSeconds = 20;
+        public const int MinMaxSeconds = 5;
+        public const int MaxMaxSeconds = 60;
+
         // Only features switched off are stored; everything is on by default.
         private List<string> disabled = new List<string>();
+        private int maxSeconds = DefaultMaxSeconds;
+
+        /// <summary>Longest real time a deferred group is spread over; read at every step, so changes apply at once.</summary>
+        public int MaxSeconds
+        {
+            get => maxSeconds;
+            set => maxSeconds = Mathf.Clamp(value, MinMaxSeconds, MaxMaxSeconds);
+        }
 
         public bool IsEnabled(Feature feature) => !disabled.Contains(feature.Id);
 
@@ -156,8 +168,12 @@ namespace DeferredRaidGeneration
         public override void ExposeData()
         {
             Scribe_Collections.Look(ref disabled, "disabled", LookMode.Value);
+            Scribe_Values.Look(ref maxSeconds, "maxSeconds", DefaultMaxSeconds);
             if (Scribe.mode != LoadSaveMode.Saving)
+            {
                 disabled ??= new List<string>();
+                MaxSeconds = maxSeconds;
+            }
         }
     }
 
@@ -169,6 +185,7 @@ namespace DeferredRaidGeneration
         private const float CheckboxColumn = 36f;
         private Vector2 scroll;
         private float viewHeight;
+        private string maxSecondsBuffer;
 
         public DeferredRaidGenerationMod(ModContentPack content) : base(content)
         {
@@ -176,6 +193,14 @@ namespace DeferredRaidGeneration
         }
 
         public override string SettingsCategory() => "Deferred Raid Generation";
+
+        // Called when the settings window closes: drop the typed text so an out-of-range entry shows as the value
+        // actually saved next time the window opens.
+        public override void WriteSettings()
+        {
+            base.WriteSettings();
+            maxSecondsBuffer = null;
+        }
 
         public override void DoSettingsWindowContents(Rect inRect)
         {
@@ -186,10 +211,62 @@ namespace DeferredRaidGeneration
             listing.Label("Changes take effect after restarting the game. A feature that is off does not patch the game at all.");
             listing.GapLine();
             foreach (Feature feature in Features.All)
+            {
                 DrawFeature(listing, feature);
+                if (feature.Id == Features.RaidDeferral)
+                    DrawMaxSeconds(listing, feature);
+            }
             viewHeight = listing.CurHeight;
             listing.End();
             Widgets.EndScrollView();
+        }
+
+        /// <summary>
+        /// Typed number instead of a slider. The text is kept as typed so partial input like "1" on the way to "15" is not
+        /// rewritten; the stored value is clamped to the allowed range and the clamped value is shown when they differ.
+        /// Shown as a child of raid deferral: the step pacing is shared with quest groups, but those never get large
+        /// enough to reach the cap.
+        /// </summary>
+        private void DrawMaxSeconds(Listing_Standard listing, Feature raidDeferral)
+        {
+            maxSecondsBuffer ??= Settings.MaxSeconds.ToString();
+            bool parentOn = Settings.IsEffectivelyEnabled(raidDeferral);
+            float width = listing.ColumnWidth;
+            listing.Indent(ChildIndent);
+            listing.ColumnWidth = width - ChildIndent;
+            if (!parentOn)
+                GUI.color = Color.gray;
+            Rect row = listing.GetRect(Text.LineHeight);
+            Rect labelRect = row.LeftPart(0.6f);
+            Rect fieldRect = new Rect(labelRect.xMax, row.y, 60f, row.height);
+            Rect resetRect = new Rect(fieldRect.xMax + 8f, row.y, 120f, row.height);
+            Widgets.Label(labelRect, $"Maximum preparation time (seconds, {DeferredRaidGenerationSettings.MinMaxSeconds}-{DeferredRaidGenerationSettings.MaxMaxSeconds})");
+            maxSecondsBuffer = Widgets.TextField(fieldRect, maxSecondsBuffer, 3, new System.Text.RegularExpressions.Regex("^[0-9]*$"));
+            if (int.TryParse(maxSecondsBuffer, out int typed))
+                Settings.MaxSeconds = typed;
+            if (Widgets.ButtonText(resetRect, $"Default ({DeferredRaidGenerationSettings.DefaultMaxSeconds})"))
+            {
+                Settings.MaxSeconds = DeferredRaidGenerationSettings.DefaultMaxSeconds;
+                maxSecondsBuffer = Settings.MaxSeconds.ToString();
+            }
+            GUI.color = Color.white;
+            if (!int.TryParse(maxSecondsBuffer, out typed) || typed != Settings.MaxSeconds)
+            {
+                GUI.color = ColorLibrary.Gold;
+                listing.Label($"Out of range or empty; using {Settings.MaxSeconds} s.");
+                GUI.color = Color.white;
+            }
+            listing.ColumnWidth = width - ChildIndent - DescriptionIndent - CheckboxColumn;
+            listing.Indent(DescriptionIndent);
+            GUI.color = Color.gray;
+            string description = "Applies at once, no restart needed. A large raid (or Dynamic Diplomacy army) is spread over at most about this many seconds of real time " +
+                "(otherwise 0.25 s per pawn, so only groups larger than 4 times this value are affected, e.g. over 80 pawns at 20 s). Longer means fewer, more widely spaced " +
+                "short pauses while it is prepared, and the raid arriving later; each pause stays as long. Slow steps always get extra rest, so slower PCs may take longer than this.";
+            listing.Label(parentOn ? description : description + " (No effect while raid generation over several seconds is off.)");
+            GUI.color = Color.white;
+            listing.Outdent(DescriptionIndent + ChildIndent);
+            listing.ColumnWidth = width;
+            listing.Gap(6f);
         }
 
         private static void DrawFeature(Listing_Standard listing, Feature feature)

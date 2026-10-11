@@ -183,15 +183,29 @@ namespace DeferredRaidGeneration
         public override void Execute()
         {
             DeferredRaids.ReplayingRaid = this;
+            int before = Generated.Count;
+            bool result;
             try
             {
-                Worker.TryExecute(Parms);
+                result = Worker.TryExecute(Parms);
             }
             finally
             {
                 DeferredRaids.ReplayingRaid = null;
             }
+            // Vanilla gives up silently at several points (no spawn center, no pawns), and the raid is then lost.
+            if (Prefs.DevMode && (!result || Generated.Count == before))
+            {
+                var probe = (IncidentParms)CloneMethod.Invoke(Parms, null);
+                probe.spawnCenter = IntVec3.Invalid;
+                bool center = probe.raidArrivalMode?.Worker.TryResolveRaidSpawnCenter(probe) == true;
+                Log.Warning($"[DeferredRaidGeneration] Replay of {Label} returned {result}: map {(Parms.target as Map)?.ToString() ?? "none"}, "
+                    + $"pawns handed over {(Generated.Count == 0 ? "yes" : $"no ({Generated.Count} left)")}, spawn center now {(center ? "found" : "NOT found")}, "
+                    + $"faction {Parms.faction}, {Parms.raidStrategy?.defName}/{Parms.raidArrivalMode?.defName}, forced {Parms.forced}.");
+            }
         }
+
+        private static readonly MethodInfo CloneMethod = AccessTools.Method(typeof(object), "MemberwiseClone");
     }
 
     /// <summary>
@@ -227,7 +241,7 @@ namespace DeferredRaidGeneration
     /// <summary>
     /// Large groups of pawns (enemy and friendly raids, Dynamic Diplomacy arenas) are split in two: when the event
     /// fires, what to generate is decided exactly as the original code would, then the pawns are generated one at a
-    /// time (SecondsPerPawn each, at most MaxSeconds in total) while the game keeps running. When all pawns exist the original code runs again
+    /// time (SecondsPerPawn each, about MaxSeconds in total at most) while the game keeps running. When all pawns exist the original code runs again
     /// ("replay") and the pre-generated pawns are handed to it instead of generating new ones, so arrival, letter,
     /// lords and loot are all unchanged.
     /// </summary>
@@ -235,10 +249,10 @@ namespace DeferredRaidGeneration
     {
         public const int MinPawnsToDefer = 5;
         // Pawns are generated one at a time, SecondsPerPawn of real time apart, so a group is delayed in proportion to
-        // its size, but by at most MaxSeconds. After a step that took t ms the next one also waits at least
-        // IdleFactor * t ms, so a slow step is never followed directly by another one.
+        // its size, but by at most MaxSeconds (set in the mod settings). After a step that took t ms the next one also
+        // waits at least IdleFactor * t ms, so a slow step is never followed directly by another one.
         private const float SecondsPerPawn = 0.25f;
-        private const float MaxSeconds = 20f;
+        private static float MaxSeconds => DeferredRaidGenerationMod.Settings.MaxSeconds;
         private const float IdleFactor = 2f;
         // While the player moves or zooms the camera, steps wait until it has been still for CameraStillSeconds, so
         // the hitch does not land in the middle of a pan; a group is held back by at most MaxCameraWaitSeconds.
@@ -541,9 +555,11 @@ namespace DeferredRaidGeneration
                 Staggered.Clear();
                 ReleaseUnused(generation);
             }
+            // Drop pod arrivals are still inside the incoming pods here, so count pawns whose holder is spawned too.
             if (Prefs.DevMode)
                 Log.Message($"[DeferredRaidGeneration] Executed {generation.Label} in {watch.Elapsed.TotalMilliseconds:F0} ms; "
-                    + $"{generated.Count(p => p.Spawned && p.Drawer.renderer.renderTree.Resolved)} of {generated.Count(p => p.Spawned)} spawned pawns arrived with graphics built.");
+                    + $"{generated.Count(p => p.SpawnedOrAnyParentSpawned && p.Drawer.renderer.renderTree.Resolved)} of {generated.Count(p => p.SpawnedOrAnyParentSpawned)} arrived pawns "
+                    + $"({generated.Count(p => !p.Spawned && p.SpawnedOrAnyParentSpawned)} still in drop pods) have graphics built.");
         }
 
         internal static void StartStaggeredWaits()
@@ -1142,7 +1158,8 @@ namespace DeferredRaidGeneration
     [HarmonyPatch(typeof(Autosaver), nameof(Autosaver.AutosaverTick))]
     public static class Patch_Autosaver_AutosaverTick
     {
-        private const float MaxHoldSeconds = 60f;
+        // A minute, or twice the longest preparation time so a group that comes due late is not cut short.
+        private static float MaxHoldSeconds => Math.Max(60f, DeferredRaidGenerationMod.Settings.MaxSeconds * 2f);
         private static readonly AccessTools.FieldRef<Autosaver, int> ticksSinceSave =
             AccessTools.FieldRefAccess<Autosaver, int>("ticksSinceSave");
         private static readonly MethodInfo intervalGetter = AccessTools.PropertyGetter(typeof(Autosaver), "AutosaveIntervalTicks");
