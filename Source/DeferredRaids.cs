@@ -61,18 +61,28 @@ namespace DeferredRaidGeneration
     /// component. The raid sent there is exempted from WD's storyteller raid gate only by a flag that is set while the
     /// incident runs, and the tracker declares victory once no enemy is on the map some ticks after the fight started.
     /// A deferred replay would miss the flag and could arrive after that check, so these maps are left to vanilla.
+    /// The game adds the tracker to every map, so only a map whose tracker reports a pending interception raid or an
+    /// active encounter counts.
     /// </summary>
     public static class WorldDominationCompat
     {
-        private const string ClashTrackerName = "TSA_WorldDomination.WD_MapComponent_CaravanClash";
+        private static readonly Type ClashTracker = AccessTools.TypeByName("TSA_WorldDomination.WD_MapComponent_CaravanClash");
+        private static readonly PropertyInfo EncounterBusy = ClashTracker == null ? null : AccessTools.Property(ClashTracker, "ShouldSkipExternalRaidSteering");
 
-        /// <summary>True when the map is a World Domination clash encounter map.</summary>
+        /// <summary>True when the map is hosting a World Domination clash encounter.</summary>
         public static bool IsClashMap(Map map)
         {
+            if (ClashTracker == null)
+                return false;
             List<MapComponent> components = map.components;
             for (int i = 0; i < components.Count; i++)
-                if (components[i].GetType().FullName == ClashTrackerName)
-                    return true;
+            {
+                MapComponent component = components[i];
+                if (component.GetType() != ClashTracker)
+                    continue;
+                // Without the property (another WD version) stay on the safe side and leave the raid to vanilla.
+                return EncounterBusy == null || (bool)EncounterBusy.GetValue(component);
+            }
             return false;
         }
     }
@@ -332,46 +342,58 @@ namespace DeferredRaidGeneration
         /// </summary>
         public bool TryDefer(IncidentWorker worker, IncidentParms parms)
         {
-            if (Disabled || AnyReplaying)
-                return false;
             Type type = worker.GetType();
             if (type != typeof(IncidentWorker_RaidEnemy) && type != typeof(IncidentWorker_RaidFriendly))
                 return false;
-            if (!(parms.target is Map map) || parms.quest != null || !parms.questTag.NullOrEmpty() || parms.pawnKind != null
-                || parms.pawnGroups != null || parms.controllerPawn != null)
+            if (Disabled)
+                return Skip(worker, "deferral switched off (debug action)");
+            if (AnyReplaying)
                 return false;
+            if (!(parms.target is Map map))
+                return Skip(worker, "target is not a map");
+            if (parms.quest != null || !parms.questTag.NullOrEmpty())
+                return Skip(worker, "quest raid");
+            if (parms.pawnKind != null || parms.pawnGroups != null || parms.controllerPawn != null)
+                return Skip(worker, "pawns already chosen by the caller");
             if (worker.def.requireColonistsPresent && map.mapPawns.FreeColonistsSpawnedCount == 0)
-                return false;
+                return Skip(worker, "no colonists on the map");
             if (WorldDominationCompat.IsClashMap(map))
-                return false;
+                return Skip(worker, "World Domination clash map");
             if (BreakingNewsCompat.WantsRaidFaction(worker, parms))
-            {
-                if (Prefs.DevMode)
-                    Log.Message("[DeferredRaidGeneration] Breaking News mechanoid advance is active; running this raid immediately.");
-                return false;
-            }
+                return Skip(worker, "Breaking News mechanoid advance is active");
 
             // Vanilla re-rolls the child-raid restriction every time it runs, so a raid that is handed back to vanilla
             // must not keep the one rolled while planning, or the chance of a child raid would be rolled twice.
             RaidAgeRestrictionDef originalAgeRestriction = parms.raidAgeRestriction;
             PendingRaid raid = null;
+            string reason = null;
             try
             {
-                raid = Plan(worker, parms);
+                raid = Plan(worker, parms, out reason);
             }
             finally
             {
                 if (raid == null || raid.Options.Count < MinPawnsToDefer)
                     parms.raidAgeRestriction = originalAgeRestriction;
             }
-            if (raid == null || raid.Options.Count < MinPawnsToDefer)
-                return false;
+            if (raid == null)
+                return Skip(worker, reason);
+            if (raid.Options.Count < MinPawnsToDefer)
+                return Skip(worker, $"only {raid.Options.Count} pawns");
 
             Enqueue(raid);
             if (Prefs.DevMode)
                 Log.Message($"[DeferredRaidGeneration] Deferred {worker.def.defName}: {raid.Count} pawns of {parms.faction}, {parms.raidStrategy?.defName}/{parms.raidArrivalMode?.defName}.");
             Patch_MapPawns_AllPawnsUnspawned.ResetStats();
             return true;
+        }
+
+        /// <summary>Logs in dev mode why a raid runs immediately; always returns false.</summary>
+        private static bool Skip(IncidentWorker worker, string reason)
+        {
+            if (Prefs.DevMode)
+                Log.Message($"[DeferredRaidGeneration] {worker.def.defName} not deferred: {reason}.");
+            return false;
         }
 
         public void Enqueue(PendingGeneration generation)
@@ -386,23 +408,33 @@ namespace DeferredRaidGeneration
         /// Resolves the raid the same way IncidentWorker_Raid.TryGenerateRaidInfo does up to pawn generation.
         /// The resolved values stay in parms, so the replay skips re-resolving them.
         /// </summary>
-        private static PendingRaid Plan(IncidentWorker worker, IncidentParms parms)
+        private static PendingRaid Plan(IncidentWorker worker, IncidentParms parms, out string reason)
         {
+            reason = null;
             var raidWorker = (IncidentWorker_Raid)worker;
             PawnGroupKindDef groupKind = parms.pawnGroupKind ?? PawnGroupKindDefOf.Combat;
             ResolveRaidPoints.Invoke(raidWorker, new object[] { parms });
             if (!(bool)TryResolveRaidFaction.Invoke(raidWorker, new object[] { parms }))
+            {
+                reason = "no faction";
                 return null;
+            }
             raidWorker.ResolveRaidStrategy(parms, groupKind);
             if (parms.raidArrivalMode == null && !raidWorker.TryResolveRaidArriveMode(parms))
+            {
+                reason = "no arrival mode";
                 return null;
+            }
             raidWorker.ResolveRaidAgeRestriction(parms);
 
             // Strategies that generate their own threats (sieges with mortars, mech clusters, ...) are left to vanilla.
             Type strategyType = parms.raidStrategy.Worker.GetType();
             if (Declares(strategyType, nameof(RaidStrategyWorker.SpawnThreats), typeof(RaidStrategyWorker))
                 || Declares(strategyType, nameof(RaidStrategyWorker.TryGenerateThreats), typeof(RaidStrategyWorker)))
+            {
+                reason = $"strategy {parms.raidStrategy.defName} generates its own threats";
                 return null;
+            }
 
             // Vanilla fails the incident when no spawn center is found; check that now, since the caller is told the
             // raid succeeded as soon as it is queued. Done on a copy because some arrival modes cannot resolve twice
@@ -410,7 +442,10 @@ namespace DeferredRaidGeneration
             // is then. CenterDrop may fall back to EdgeDrop, which also changes the points, so that change is kept.
             var probe = (IncidentParms)CloneMethod.Invoke(parms, null);
             if (!probe.raidArrivalMode.Worker.TryResolveRaidSpawnCenter(probe))
+            {
+                reason = $"no spawn center for {parms.raidArrivalMode.defName}";
                 return null;
+            }
             parms.raidArrivalMode = probe.raidArrivalMode;
 
             PawnGroupMakerParms groupParms = IncidentParmsUtility.GetDefaultPawnGroupMakerParms(groupKind, parms);
@@ -420,7 +455,10 @@ namespace DeferredRaidGeneration
                 || !PawnGroupMakerUtility.TryGetRandomPawnGroupMaker(groupParms, out PawnGroupMaker groupMaker, groupParms.ignoreGroupCommonality)
                 || groupMaker.kindDef.Worker.GetType() != typeof(PawnGroupKindWorker_Normal)
                 || !groupMaker.kindDef.Worker.CanGenerateFrom(groupParms, groupMaker))
+            {
+                reason = $"no plain group maker for {parms.faction}";
                 return null;
+            }
 
             return new PendingRaid
             {
