@@ -27,20 +27,20 @@ Removes most of the multi-second freeze when a large raid fires, and the pause w
 [*]Every feature can be switched off in the mod settings (takes effect after a restart); a feature that is off does not patch the game at all.
 [/list]
 
-[h2]Test report[/h2]One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 170 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs. Also active: Performance Optimizer, Performance - Slower Pawn Tick Rate, Performance Esmolas, Better GC.
+[h2]Test report[/h2]One late-game colony with a large mod list (Humanoid Alien Races, Miho, Dynamic Diplomacy; 167 active mods in total), about 1,100-1,500 world pawns. Numbers are real-time milliseconds from development-mode logs on RimWorld 1.7 (2026-10-14), with the maximum preparation time set to 60 s. Lines marked (1.6) were measured on 1.6 and have not been re-run yet. Also active: Performance Optimizer, Performance - Slower Pawn Tick Rate, Performance Esmolas.
 
-[h3]Raids (2026-10-05, 2026-10-07)[/h3][list]
-[*]Vanilla: friendly raids of 70 / 93 pawns froze for 2.9 / 2.6 s; Dynamic Diplomacy arenas of 234-258 pawns for 12.3 s, 31.6 s with several old arena maps loaded.
-[*]Enemy raids of 10-144 pawns: arrival pause 19-140 ms; friendly raids of 23-96 pawns: 17-57 ms. 111 pawns were generated over 21.5 s.
-[*]Generation steps: 25-27 ms on average in 138-165-pawn raids; worst single step 320 ms (a garbage collection).
-[*]Dynamic Diplomacy arenas of 255-324 pawns: armies generated over 34-73 s; the battle start (map generation) still paused 1.7-7 s.
-[*]Saving or loading while groups were pending: saved groups arrived intact, nothing carried over into a loaded game; a due autosave waited 19.1 s, then saved.
-[*]Pawn graphics: a 140-pawn raid arriving on screen took a 737 ms frame without the warmup, 29-35 ms with it.
-[*]Steal checks (82-pawn raid): 2.5-2.8 ms per check without the cache, 1.4-1.5 ms with it.
+[h3]Raids[/h3][list]
+[*]Vanilla: an enemy raid of 176 pawns froze for 2.6 s. (1.6) Dynamic Diplomacy arenas of 234-258 pawns froze for 12.3 s, 31.6 s with several old arena maps loaded.
+[*]Enemy raids of 169-178 pawns: arrival pause 39-55 ms; each group was generated over 47-57 s.
+[*]Generation steps: 11-19 ms on average; worst single step 98 ms.
+[*](1.6) Dynamic Diplomacy arenas of 255-324 pawns: armies generated over 34-73 s; the battle start (map generation) still paused 1.7-7 s.
+[*](1.6) Saving or loading while groups were pending: saved groups arrived intact, nothing carried over into a loaded game; a due autosave waited 19.1 s, then saved.
+[*]Pawn graphics: every raider's graphics were ready on arrival; the first frame on screen still took 160-200 ms, spent on the game's texture atlas (about 1.3-1.5 ms per pawn, not covered by the warmup).
+[*]Steal checks (map full of corpses and gear from earlier raids): 3.7-5.6 ms per check without the cache, 1.3-1.9 ms with it.
 [/list]
-[h3]Beggar and refugee quests (2026-10-09)[/h3][list]
-[*]Vanilla: groups of 12-30 froze for 0.74-1.07 s when the quest appeared; accepting 43 refugees froze for 0.59 s.
-[*]With this mod: groups of 12-52 generated over 6-24 s (steps 11-31 ms on average), quest appeared with a 0.2-0.35 s pause; accepting 51 refugees took 78 ms, all walked in over 2.6 s.
+[h3]Beggar and refugee quests[/h3][list]
+[*](1.6) Vanilla: groups of 12-30 froze for 0.74-1.07 s when the quest appeared; accepting 43 refugees froze for 0.59 s.
+[*]With this mod: groups of 47 / 53 generated over 18 s (steps 13 ms on average), quest appeared with a 0.27 / 0.16 s pause; accepting 53 refugees took 35 ms, all walked in over 1.6 s.
 [/list]
 [hr][/hr]
 This mod was developed with the help of AI coding tools (Claude Code). Full source code is included in the Source folder and on [url=https://github.com/ifchen0/DeferredRaidGeneration]GitHub[/url] for review.
