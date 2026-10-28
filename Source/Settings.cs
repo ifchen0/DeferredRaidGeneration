@@ -67,7 +67,7 @@ namespace DeferredRaidGeneration
                 UnavailableText = "(requires Ideology or Royalty)",
             },
             new Feature(AutosaveHold, "Autosave waits until pending groups are done",
-                "An autosave that comes due while pawns are being generated waits for them (at most a minute) instead of finishing them in one go.",
+                "An autosave that comes due while pawns are being generated waits for them (at most a minute, or twice the maximum preparation time if that is longer) instead of finishing them in one go.",
                 RaidDeferral, QuestDeferral, StaggeredJoin),
             new Feature(ArrivalSmoothing, "Lighter arrival of large groups",
                 "Groups of 5 or more arriving from a deferred raid or a quest start looking for their first job spread over half a second, " +
@@ -126,8 +126,12 @@ namespace DeferredRaidGeneration
             RenderWarmupActive = IsActive(RenderWarmup);
             StaggeredJoinActive = IsActive(StaggeredJoin);
             QuestDeferralActive = IsActive(QuestDeferral);
+            // Development-only timing; a failure here must not stop the startup that runs after this.
             if (Prefs.DevMode)
-                harmony.PatchCategory(Diagnostics);
+            {
+                try { harmony.PatchCategory(Diagnostics); }
+                catch (Exception e) { Log.Warning($"[DeferredRaidGeneration] Diagnostics failed to apply: {e}"); }
+            }
         }
     }
 

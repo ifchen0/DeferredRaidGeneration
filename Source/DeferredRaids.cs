@@ -114,6 +114,11 @@ namespace DeferredRaidGeneration
         /// <summary>Runs the original code, which picks up the pre-generated pawns.</summary>
         public abstract void Execute();
 
+        /// <summary>Called after a generation that no longer qualifies has released its pawns.</summary>
+        public virtual void Dropped()
+        {
+        }
+
         public void GenerateNext()
         {
             int index = Next++;
@@ -146,6 +151,7 @@ namespace DeferredRaidGeneration
         /// Besides the map still existing, an enemy raid needs its faction to still qualify the way
         /// IncidentWorker_RaidEnemy.TryResolveRaidFaction checks it; otherwise the replay would silently switch to
         /// another faction and generate everything again. A faction that made peace meanwhile simply does not come.
+        /// Friendly help is dropped the same way once its faction turned hostile, or it would arrive as allies and attack.
         /// </summary>
         public override bool StillValid
         {
@@ -155,6 +161,8 @@ namespace DeferredRaidGeneration
                     return false;
                 if (Worker is IncidentWorker_RaidEnemy
                     && !(Parms.faction != null && Parms.faction.HostileTo(Faction.OfPlayer) && (!Parms.faction.deactivated || Parms.forced)))
+                    return false;
+                if (Worker is IncidentWorker_RaidFriendly && (Parms.faction == null || Parms.faction.HostileTo(Faction.OfPlayer)))
                     return false;
                 return true;
             }
@@ -282,6 +290,7 @@ namespace DeferredRaidGeneration
         private float nextStepTime;
         // Pawn generated in the last step whose graphics are built in the next frame, so the two costs never share a frame.
         private Pawn warmNext;
+        private PendingGeneration finishNext;
         private Vector3 lastCameraPos;
         private float lastCameraSize;
         private float lastCameraMoveTime;
@@ -334,6 +343,7 @@ namespace DeferredRaidGeneration
             StaggeredArrivals.Clear();
             UnspawnedCache.Clear();
             StealValueCache.Clear();
+            PawnRenderWarmup.Clear();
         }
 
         /// <summary>
@@ -520,6 +530,13 @@ namespace DeferredRaidGeneration
                 warmNext = null;
                 return;
             }
+            if (finishNext != null && !LongEventHandler.AnyEventNowOrWaiting)
+            {
+                PendingGeneration done = finishNext;
+                finishNext = null;
+                Finish(done);
+                return;
+            }
             if (pending.Count == 0 || Time.realtimeSinceStartup < nextStepTime || LongEventHandler.AnyEventNowOrWaiting)
                 return;
             PendingGeneration generation = pending[0];
@@ -546,13 +563,9 @@ namespace DeferredRaidGeneration
             generation.Steps++;
             generation.StepMsTotal += ms;
             generation.StepMsMax = Math.Max(generation.StepMsMax, ms);
+            // The last pawn's warmup and the replay each get a frame of their own instead of piling onto this step.
             if (generation.Done)
-            {
-                if (warmNext != null)
-                    PawnRenderWarmup.Warm(warmNext);
-                warmNext = null;
-                Finish(generation);
-            }
+                finishNext = generation;
         }
 
         private void Finish(PendingGeneration generation)
@@ -565,6 +578,7 @@ namespace DeferredRaidGeneration
                 if (Prefs.DevMode)
                     Log.Message($"[DeferredRaidGeneration] Dropped {generation.Label}: its map or faction no longer qualifies.");
                 ReleaseUnused(generation);
+                generation.Dropped();
                 return;
             }
             if (generation.Failed)
@@ -627,6 +641,8 @@ namespace DeferredRaidGeneration
         /// <summary>Generates and executes everything still pending, synchronously (used before saving).</summary>
         public void FlushAll()
         {
+            // A generation waiting for its replay frame is still first in pending and gets finished below.
+            finishNext = null;
             while (pending.Count > 0)
             {
                 PendingGeneration generation = pending[0];
@@ -734,6 +750,7 @@ namespace DeferredRaidGeneration
         private static readonly Dictionary<MapPawns, List<Pawn>> cache = new Dictionary<MapPawns, List<Pawn>>();
         private static bool inStep;
         private static float filledAt;
+        private static int checkedTick;
 
         public static bool Active => depth > 0;
 
@@ -751,11 +768,21 @@ namespace DeferredRaidGeneration
                 cache.Clear();
         }
 
-        /// <summary>Starts a deferred generation step, which may reuse the walk of a step under a second ago.</summary>
+        /// <summary>
+        /// Starts a deferred generation step, which may reuse the walk of a step under a second ago. The game ticks
+        /// between steps, so pawns that have since spawned (left a cryptosleep casket or transporter) or been
+        /// destroyed are pruned from a reused walk; pawns newly put into a container are only missed until it expires.
+        /// </summary>
         public static void BeginStep()
         {
             if (Time.realtimeSinceStartup - filledAt > StepReuseSeconds)
                 cache.Clear();
+            else if (Find.TickManager.TicksGame != checkedTick)
+            {
+                foreach (List<Pawn> pawns in cache.Values)
+                    pawns.RemoveAll(p => p.Spawned || p.Destroyed || p.Discarded);
+            }
+            checkedTick = Find.TickManager.TicksGame;
             inStep = true;
         }
 
@@ -1146,12 +1173,14 @@ namespace DeferredRaidGeneration
         {
             Type conquest = AccessTools.TypeByName("DynamicDiplomacy.IncidentWorker_NPCConquest");
             initArenaMap = conquest == null ? null : AccessTools.Method(conquest, "InitArenaMap");
-            if (initArenaMap == null)
+            MethodInfo generatePawn = AccessTools.Method(typeof(PawnGenerator), nameof(PawnGenerator.GeneratePawn),
+                new[] { typeof(PawnKindDef), typeof(Faction), typeof(PlanetTile?) });
+            if (initArenaMap == null || generatePawn == null)
                 return;
+            // The arena prefix goes last: unpatching the category cannot remove these manual patches, and the
+            // GeneratePawn prefix does nothing without a deferred arena, so a failure here leaves DD untouched.
+            harmony.Patch(generatePawn, prefix: new HarmonyMethod(typeof(DynamicDiplomacyPatch), nameof(GeneratePawnPrefix)));
             harmony.Patch(initArenaMap, prefix: new HarmonyMethod(typeof(DynamicDiplomacyPatch), nameof(InitArenaMapPrefix)));
-            harmony.Patch(AccessTools.Method(typeof(PawnGenerator), nameof(PawnGenerator.GeneratePawn),
-                    new[] { typeof(PawnKindDef), typeof(Faction), typeof(PlanetTile?) }),
-                prefix: new HarmonyMethod(typeof(DynamicDiplomacyPatch), nameof(GeneratePawnPrefix)));
         }
 
         public static bool InitArenaMapPrefix(object[] __args, Faction baseAttacker, Faction baseDefender,

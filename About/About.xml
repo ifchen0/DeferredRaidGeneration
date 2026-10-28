@@ -32,7 +32,7 @@ Notes
 - Applies to enemy and friendly raids and beggar/refugee quests with at least 5 pawns. Smaller groups, trader caravans, quest raids, and raid types that create their own threats (for example mechanoid sieges) run immediately as in vanilla.
 - With Dynamic Diplomacy - Continued, the armies of a full-simulation conquest arena are generated the same way. The arena map itself is still generated in one go when the battle starts.
 - Each generation step still costs one pawn's generation time (usually 15-30 ms, occasionally over 100 ms), so you may notice a light stutter while a large group is being prepared. While you move or zoom the camera, steps wait until it has been still for 0.4 s (at most 10 s per group).
-- An autosave that comes due while pawns are being generated waits until they are done (at most a minute). A manual save in that window finishes them first, so nothing is lost.
+- An autosave that comes due while pawns are being generated waits until they are done (at most a minute, or twice the maximum preparation time if that is longer). A manual save in that window finishes them first, so nothing is lost.
 - Safe to add to or remove from an existing save.
 - Every feature can be switched off in the mod settings (takes effect after a restart); a feature that is off does not patch the game at all.
 

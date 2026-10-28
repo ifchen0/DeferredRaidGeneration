@@ -71,6 +71,13 @@ namespace DeferredRaidGeneration
             Messages.Message($"Reset graphics of {count} pawns.", MessageTypeDefOf.NeutralEvent, false);
         }
 
+        /// <summary>Forgets the old game's pawns when another game starts.</summary>
+        public static void Clear()
+        {
+            failed.Clear();
+            cursor = 0;
+        }
+
         public static void Prefix()
         {
             TreesBuilt = 0;

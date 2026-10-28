@@ -8,7 +8,6 @@ using RimWorld.Planet;
 using RimWorld.QuestGen;
 using UnityEngine;
 using Verse;
-using Verse.AI;
 
 namespace DeferredRaidGeneration
 {
@@ -38,6 +37,16 @@ namespace DeferredRaidGeneration
         public override int Count => LodgerCount;
         public override string Label => Def.defName;
         public override bool StillValid => Find.Maps.Contains(Map) && Map.IsPlayerHome;
+
+        /// <summary>
+        /// The temporary faction was added when the quest was planned; with no quest it goes through the same
+        /// removal check vanilla runs when a temporary faction's pawn leaves it.
+        /// </summary>
+        public override void Dropped()
+        {
+            if (Faction != null && !FactionHandedOver)
+                Find.FactionManager.Notify_PawnLeftFaction(Faction);
+        }
 
         public bool IsBeggars => Def.defName == DeferredQuests.Beggars;
 
@@ -455,12 +464,9 @@ namespace DeferredRaidGeneration
             IntVec3 loc = CellFinder.RandomClosewalkCellNear(arrival.SpawnCenter, arrival.Map, 8);
             GenSpawn.Spawn(pawn, loc, arrival.Map, arrival.SpawnRotation);
             arrival.Arrived++;
-            if (pawn.jobs != null && pawn.jobs.curJob == null)
-            {
-                Job wait = JobMaker.MakeJob(JobDefOf.Wait);
-                wait.expiryInterval = Rand.RangeInclusive(1, 30);
-                pawn.jobs.StartJob(wait);
-            }
+            // Step's finally gives it the same short wait as the replayed groups, if it has no job yet.
+            if (!DeferredRaids.Staggered.Contains(pawn))
+                DeferredRaids.Staggered.Add(pawn);
         }
 
         /// <summary>Lets everyone still waiting arrive now (used before saving).</summary>
