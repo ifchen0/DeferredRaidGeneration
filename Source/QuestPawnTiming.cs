@@ -81,7 +81,7 @@ namespace DeferredRaidGeneration
             int pawns = QuestPawnTiming.pawnsGeneratedInQuest;
             QuestPawnTiming.pawnsGeneratedInQuest = 0;
             PendingQuest replaying = DeferredQuests.Replaying;
-            if (Prefs.DevMode && pawns > 0)
+            if (Features.LogDiagnostics && pawns > 0)
             {
                 double ms = (Stopwatch.GetTimestamp() - __state) * 1000.0 / Stopwatch.Frequency;
                 if (replaying == null)
@@ -141,7 +141,7 @@ namespace DeferredRaidGeneration
     {
         public static void Prefix(QuestPart_PawnsArrive __instance, Signal signal, out long __state)
         {
-            __state = signal.tag == __instance.inSignal && Prefs.DevMode ? Stopwatch.GetTimestamp() : 0;
+            __state = signal.tag == __instance.inSignal && Features.LogDiagnostics ? Stopwatch.GetTimestamp() : 0;
             if (__state != 0)
             {
                 ArrivalBreakdown.Reset();
@@ -228,7 +228,7 @@ namespace DeferredRaidGeneration
     [HarmonyPatch(typeof(Quest), nameof(Quest.Accept))]
     public static class Patch_Quest_Accept_Timing
     {
-        public static void Prefix(out long __state) => __state = Prefs.DevMode ? Stopwatch.GetTimestamp() : 0;
+        public static void Prefix(out long __state) => __state = Features.LogDiagnostics ? Stopwatch.GetTimestamp() : 0;
 
         public static Exception Finalizer(Exception __exception, Quest __instance, long __state)
         {

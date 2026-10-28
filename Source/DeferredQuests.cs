@@ -150,7 +150,7 @@ namespace DeferredRaidGeneration
                 Run = run,
             };
             component.Enqueue(quest);
-            if (Prefs.DevMode)
+            if (Features.LogDiagnostics)
                 Log.Message($"[DeferredRaidGeneration] Deferred quest {def.defName}: {lodgerCount} pawns ({childCount} children).");
             Patch_MapPawns_AllPawnsUnspawned.ResetStats();
             return true;
@@ -422,7 +422,7 @@ namespace DeferredRaidGeneration
             if (arrival.Waiting.Count == 0)
             {
                 queue.RemoveAt(0);
-                if (Prefs.DevMode)
+                if (Features.LogDiagnostics)
                     Log.Message($"[DeferredRaidGeneration] {arrival.Arrived + 1} quest pawns joined over {Time.realtimeSinceStartup - arrival.StartTime:F1} s.");
                 return queue.Count > 0;
             }

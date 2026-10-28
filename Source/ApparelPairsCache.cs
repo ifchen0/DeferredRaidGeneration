@@ -81,7 +81,7 @@ namespace DeferredRaidGeneration
 
         public static void Prefix(Pawn pawn, out long __state)
         {
-            __state = Prefs.DevMode ? Stopwatch.GetTimestamp() : 0;
+            __state = Features.LogDiagnostics ? Stopwatch.GetTimestamp() : 0;
             if (Disabled || swappedOut != null || pawn?.def == null)
                 return;
             List<ThingStuffPair> current = allPairs();

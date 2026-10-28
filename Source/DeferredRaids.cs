@@ -392,7 +392,7 @@ namespace DeferredRaidGeneration
                 return Skip(worker, $"only {raid.Options.Count} pawns");
 
             Enqueue(raid);
-            if (Prefs.DevMode)
+            if (Features.LogDiagnostics)
                 Log.Message($"[DeferredRaidGeneration] Deferred {worker.def.defName}: {raid.Count} pawns of {parms.faction}, {parms.raidStrategy?.defName}/{parms.raidArrivalMode?.defName}.");
             Patch_MapPawns_AllPawnsUnspawned.ResetStats();
             return true;
@@ -401,7 +401,7 @@ namespace DeferredRaidGeneration
         /// <summary>Logs in dev mode why a raid runs immediately; always returns false.</summary>
         private static bool Skip(IncidentWorker worker, string reason)
         {
-            if (Prefs.DevMode)
+            if (Features.LogDiagnostics)
                 Log.Message($"[DeferredRaidGeneration] {worker.def.defName} not deferred: {reason}.");
             return false;
         }
@@ -575,7 +575,7 @@ namespace DeferredRaidGeneration
             registered.Remove(generation.Generated);
             if (!generation.StillValid)
             {
-                if (Prefs.DevMode)
+                if (Features.LogDiagnostics)
                     Log.Message($"[DeferredRaidGeneration] Dropped {generation.Label}: its map or faction no longer qualifies.");
                 ReleaseUnused(generation);
                 generation.Dropped();
@@ -583,13 +583,13 @@ namespace DeferredRaidGeneration
             }
             if (generation.Failed)
                 ReleaseUnused(generation);
-            if (Prefs.DevMode && generation.Steps > 0)
+            if (Features.LogDiagnostics && generation.Steps > 0)
                 Log.Message($"[DeferredRaidGeneration] Generated {generation.Generated.Count} pawns for {generation.Label} in {generation.Steps} steps over {Time.realtimeSinceStartup - generation.StartTime:F1} s; step avg {generation.StepMsTotal / generation.Steps:F1} ms, max {generation.StepMsMax:F1} ms; waited {generation.CameraWaitSeconds:F1} s for the camera; {Patch_MapPawns_AllPawnsUnspawned.Report()}.");
             ReplayPawns = new HashSet<Pawn>(generation.Generated);
             DiedThoughtHolders = null;
             Staggered.Clear();
             // ReleaseUnused clears Generated, so keep a copy to count the arrivals afterwards.
-            List<Pawn> generated = Prefs.DevMode ? generation.Generated.ToList() : null;
+            List<Pawn> generated = Features.LogDiagnostics ? generation.Generated.ToList() : null;
             var watch = Stopwatch.StartNew();
             try
             {
@@ -608,7 +608,7 @@ namespace DeferredRaidGeneration
                 ReleaseUnused(generation);
             }
             // Drop pod arrivals are still inside the incoming pods here, so count pawns whose holder is spawned too.
-            if (Prefs.DevMode)
+            if (Features.LogDiagnostics)
                 Log.Message($"[DeferredRaidGeneration] Executed {generation.Label} in {watch.Elapsed.TotalMilliseconds:F0} ms; "
                     + $"{generated.Count(p => p.SpawnedOrAnyParentSpawned && p.Drawer.renderer.renderTree.Resolved)} of {generated.Count(p => p.SpawnedOrAnyParentSpawned)} arrived pawns "
                     + $"({generated.Count(p => !p.Spawned && p.SpawnedOrAnyParentSpawned)} still in drop pods) have graphics built.");
@@ -838,7 +838,7 @@ namespace DeferredRaidGeneration
         public static Exception Finalizer(Exception __exception, PawnGroupMakerParms parms, List<Pawn> __result, long __state)
         {
             UnspawnedCache.Exit();
-            if (Prefs.DevMode && !DeferredRaids.AnyReplaying)
+            if (Features.LogDiagnostics && !DeferredRaids.AnyReplaying)
             {
                 double ms = (Stopwatch.GetTimestamp() - __state) * 1000.0 / Stopwatch.Frequency;
                 if (ms >= LogThresholdMs)
@@ -861,7 +861,7 @@ namespace DeferredRaidGeneration
 
         public static bool Prefix(MapPawns __instance, ref List<Pawn> __result, out long __state)
         {
-            __state = Prefs.DevMode ? Stopwatch.GetTimestamp() : 0;
+            __state = Features.LogDiagnostics ? Stopwatch.GetTimestamp() : 0;
             if (!UnspawnedCache.Active || !UnspawnedCache.TryGet(__instance, out List<Pawn> cached))
                 return true;
             List<Pawn> buffer = resultBuffer(__instance);
@@ -1023,7 +1023,7 @@ namespace DeferredRaidGeneration
 
         public static void Enter()
         {
-            if (depth++ == 0 && Prefs.DevMode)
+            if (depth++ == 0 && Features.LogDiagnostics)
                 loopStart = Stopwatch.GetTimestamp();
         }
 
@@ -1034,7 +1034,7 @@ namespace DeferredRaidGeneration
             if (depth > 0)
                 return;
             cache.Clear();
-            if (Prefs.DevMode && loopStart != 0)
+            if (Features.LogDiagnostics && loopStart != 0)
             {
                 double ms = (Stopwatch.GetTimestamp() - loopStart) * 1000.0 / Stopwatch.Frequency;
                 loopStart = 0;
@@ -1056,14 +1056,14 @@ namespace DeferredRaidGeneration
 
         public static bool TryGet(Thing thing, out float value)
         {
-            if (Prefs.DevMode)
+            if (Features.LogDiagnostics)
                 lookups++;
             return cache.TryGetValue(thing, out value);
         }
 
         public static void Store(Thing thing, float value)
         {
-            if (Prefs.DevMode)
+            if (Features.LogDiagnostics)
                 computed++;
             cache[thing] = value;
         }
@@ -1195,7 +1195,7 @@ namespace DeferredRaidGeneration
             kinds.AddRange(lhs.Select(k => new KeyValuePair<PawnKindDef, Faction>(k, baseAttacker)));
             kinds.AddRange(rhs.Select(k => new KeyValuePair<PawnKindDef, Faction>(k, baseDefender)));
             component.Enqueue(new PendingArena { InitArenaMap = initArenaMap, Args = (object[])__args.Clone(), Kinds = kinds });
-            if (Prefs.DevMode)
+            if (Features.LogDiagnostics)
                 Log.Message($"[DeferredRaidGeneration] Deferred NPC conquest arena: {kinds.Count} pawns, {baseAttacker} vs {baseDefender}.");
             return false;
         }
@@ -1244,7 +1244,7 @@ namespace DeferredRaidGeneration
         {
             if (DeferredRaids.Instance?.HasPending != true)
             {
-                if (holdStart >= 0f && Prefs.DevMode)
+                if (holdStart >= 0f && Features.LogDiagnostics)
                     Log.Message($"[DeferredRaidGeneration] Autosave released after waiting {Time.realtimeSinceStartup - holdStart:F1} s for pending groups.");
                 holdStart = -1f;
                 return true;
@@ -1255,7 +1255,7 @@ namespace DeferredRaidGeneration
             if (holdStart < 0f)
             {
                 holdStart = Time.realtimeSinceStartup;
-                if (Prefs.DevMode)
+                if (Features.LogDiagnostics)
                     Log.Message("[DeferredRaidGeneration] Autosave held until pending groups finish generating.");
             }
             if (Time.realtimeSinceStartup - holdStart > MaxHoldSeconds)

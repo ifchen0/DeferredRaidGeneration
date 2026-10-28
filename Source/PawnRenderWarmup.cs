@@ -84,7 +84,7 @@ namespace DeferredRaidGeneration
             TreesMs = 0;
             Bakes = 0;
             BakesMs = 0;
-            drawStart = Prefs.DevMode ? Stopwatch.GetTimestamp() : 0;
+            drawStart = Features.LogDiagnostics ? Stopwatch.GetTimestamp() : 0;
         }
 
         public static void Postfix(DynamicDrawManager __instance)
@@ -146,7 +146,7 @@ namespace DeferredRaidGeneration
                 if (Stopwatch.GetTimestamp() - start >= budget)
                     break;
             }
-            if (!Prefs.DevMode)
+            if (!Features.LogDiagnostics)
                 return;
             if (warmed > 0)
             {
@@ -173,7 +173,7 @@ namespace DeferredRaidGeneration
     {
         public static void Prefix(PawnRenderer __instance, out long __state)
         {
-            __state = Prefs.DevMode && !PawnRenderWarmup.InWarmup && !__instance.renderTree.Resolved ? Stopwatch.GetTimestamp() : 0;
+            __state = Features.LogDiagnostics && !PawnRenderWarmup.InWarmup && !__instance.renderTree.Resolved ? Stopwatch.GetTimestamp() : 0;
         }
 
         public static void Postfix(long __state)
@@ -192,7 +192,7 @@ namespace DeferredRaidGeneration
     {
         public static void Prefix(PawnTextureAtlasFrameSet frameSet, Rot4 rotation, PawnDrawMode drawMode, out long __state)
         {
-            __state = Prefs.DevMode && frameSet.isDirty[frameSet.GetIndex(rotation, drawMode)] ? Stopwatch.GetTimestamp() : 0;
+            __state = Features.LogDiagnostics && frameSet.isDirty[frameSet.GetIndex(rotation, drawMode)] ? Stopwatch.GetTimestamp() : 0;
         }
 
         public static void Postfix(long __state)

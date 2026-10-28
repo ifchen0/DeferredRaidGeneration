@@ -49,8 +49,11 @@ namespace DeferredRaidGeneration
         public const string ContainerCache = "ContainerCache";
         public const string ApparelCache = "ApparelCache";
         public const string StealCache = "StealCache";
-        /// <summary>Development-mode timing patches; applied when development mode is on at startup.</summary>
+        /// <summary>Development-mode timing patches; applied when diagnostic logging is on at startup.</summary>
         public const string Diagnostics = "Diagnostics";
+
+        /// <summary>Timing and count messages: development mode plus the opt-in setting, so dev-mode players are not spammed.</summary>
+        public static bool LogDiagnostics => Prefs.DevMode && DeferredRaidGenerationMod.Settings.DiagnosticLog;
 
         public static readonly List<Feature> All = new List<Feature>
         {
@@ -127,7 +130,7 @@ namespace DeferredRaidGeneration
             StaggeredJoinActive = IsActive(StaggeredJoin);
             QuestDeferralActive = IsActive(QuestDeferral);
             // Development-only timing; a failure here must not stop the startup that runs after this.
-            if (Prefs.DevMode)
+            if (LogDiagnostics)
             {
                 try { harmony.PatchCategory(Diagnostics); }
                 catch (Exception e) { Log.Warning($"[DeferredRaidGeneration] Diagnostics failed to apply: {e}"); }
@@ -144,6 +147,8 @@ namespace DeferredRaidGeneration
         // Only features switched off are stored; everything is on by default.
         private List<string> disabled = new List<string>();
         private int maxSeconds = DefaultMaxSeconds;
+        /// <summary>Read at every log site, so changes apply at once (except the startup-only Diagnostics patches).</summary>
+        public bool DiagnosticLog;
 
         /// <summary>Longest real time a deferred group is spread over; read at every step, so changes apply at once.</summary>
         public int MaxSeconds
@@ -173,6 +178,7 @@ namespace DeferredRaidGeneration
         {
             Scribe_Collections.Look(ref disabled, "disabled", LookMode.Value);
             Scribe_Values.Look(ref maxSeconds, "maxSeconds", DefaultMaxSeconds);
+            Scribe_Values.Look(ref DiagnosticLog, "diagnosticLog", false);
             if (Scribe.mode != LoadSaveMode.Saving)
             {
                 disabled ??= new List<string>();
@@ -220,6 +226,8 @@ namespace DeferredRaidGeneration
                 if (feature.Id == Features.RaidDeferral)
                     DrawMaxSeconds(listing, feature);
             }
+            listing.GapLine();
+            DrawDiagnosticLog(listing);
             viewHeight = listing.CurHeight;
             listing.End();
             Widgets.EndScrollView();
@@ -271,6 +279,23 @@ namespace DeferredRaidGeneration
             listing.Outdent(DescriptionIndent + ChildIndent);
             listing.ColumnWidth = width;
             listing.Gap(6f);
+        }
+
+        private static void DrawDiagnosticLog(Listing_Standard listing)
+        {
+            const string description = "Only with development mode on. Logs timings and pawn counts of deferred groups, draw spikes, steal checks and similar " +
+                "measurements. Warnings are logged regardless. Applies at once; quest timing messages need a restart.";
+            bool on = Settings.DiagnosticLog;
+            listing.CheckboxLabeled("Diagnostic log messages", ref on, description);
+            Settings.DiagnosticLog = on;
+            float width = listing.ColumnWidth;
+            listing.ColumnWidth = width - DescriptionIndent - CheckboxColumn;
+            listing.Indent(DescriptionIndent);
+            GUI.color = Color.gray;
+            listing.Label(description);
+            GUI.color = Color.white;
+            listing.Outdent(DescriptionIndent);
+            listing.ColumnWidth = width;
         }
 
         private static void DrawFeature(Listing_Standard listing, Feature feature)
