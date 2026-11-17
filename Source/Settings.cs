@@ -115,7 +115,7 @@ namespace DeferredRaidGeneration
                     continue;
                 try
                 {
-                    harmony.PatchCategory(feature.Id);
+                    harmony.PatchCategory(typeof(Features).Assembly, feature.Id);
                     feature.ApplyManual?.Invoke(harmony);
                     feature.State = FeatureState.Active;
                 }
@@ -123,7 +123,7 @@ namespace DeferredRaidGeneration
                 {
                     feature.State = FeatureState.Failed;
                     Log.Error($"[DeferredRaidGeneration] {feature.Label} failed to apply and was turned off: {e}");
-                    try { harmony.UnpatchCategory(feature.Id); } catch { }
+                    try { harmony.UnpatchCategory(typeof(Features).Assembly, feature.Id); } catch { }
                 }
             }
             RenderWarmupActive = IsActive(RenderWarmup);
@@ -132,7 +132,7 @@ namespace DeferredRaidGeneration
             // Development-only timing; a failure here must not stop the startup that runs after this.
             if (LogDiagnostics)
             {
-                try { harmony.PatchCategory(Diagnostics); }
+                try { harmony.PatchCategory(typeof(Features).Assembly, Diagnostics); }
                 catch (Exception e) { Log.Warning($"[DeferredRaidGeneration] Diagnostics failed to apply: {e}"); }
             }
         }

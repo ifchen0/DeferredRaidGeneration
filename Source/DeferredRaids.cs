@@ -21,7 +21,7 @@ namespace DeferredRaidGeneration
         {
             var harmony = new Harmony("ifchen0.deferredraidgeneration");
             // Only the flush before saving is always applied; everything else belongs to a feature that can be switched off.
-            harmony.PatchAllUncategorized();
+            harmony.PatchAllUncategorized(typeof(Startup).Assembly);
             Features.Apply(harmony, DeferredRaidGenerationMod.Settings);
             BreakingNewsCompat.Init();
         }
